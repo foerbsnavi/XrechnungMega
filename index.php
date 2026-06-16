@@ -208,8 +208,10 @@ if (isset($_GET['list'])) {
 </table>
 </div>
 
-<div class="toolbar noprint">
+<div class="toolbar noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
   <button type="button" class="btn-add" onclick="loadTemplate()">+</button>
+  <button type="button" class="btn-add" onclick="document.getElementById('xml-import-input').click()" title="XrechnungMega-XML-Dateien importieren" aria-label="XML importieren">⬆ XML importieren</button>
+  <input id="xml-import-input" type="file" accept=".xml,application/xml,text/xml" multiple style="display:none" onchange="importXML(this)" aria-label="XML-Rechnungen zum Importieren auswählen">
 </div>
 
 
@@ -220,7 +222,7 @@ if (isset($_GET['list'])) {
   </div>
 </div>
 <div id="modal-overlay" class="popup-overlay">
-  <div class="popup modal-popup">
+  <div class="popup modal-popup" role="dialog" aria-modal="true" aria-labelledby="modal-message">
     <div id="modal-message" class="modal-message"></div>
     <div class="modal-actions">
       <button type="button" id="modal-no">Nein</button>
@@ -435,6 +437,7 @@ const UI_MODAL = (()=>{
     noBtn.textContent  = noText;
     noBtn.style.display = showNo ? '' : 'none';
     overlay.style.display='flex';
+    (showNo ? noBtn : yesBtn).focus();
     return new Promise(resolve=>{
       resolver = resolve;
       yesBtn.onclick = ()=>{ const r=resolver; hide(); r && r(true); };
@@ -634,6 +637,34 @@ async function loadTemplate(){
   document.getElementById('popup-overlay').style.display='flex';
   wireInvoiceForm(el);
   recalcInvoice(el);
+}
+
+async function importXML(input){
+  const list = input.files;
+  if(!list || !list.length) return;
+  const fd = new FormData();
+  for(const f of list) fd.append('xmlfiles[]', f);
+  fd.append('csrf', window.CSRF||'');
+  try{
+    const r = await fetch('import.php', {method:'POST', body: fd, headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    if(!r.ok || !j || j.ok!==true){
+      UI_MODAL.alert((j && j.msg) ? j.msg : 'Import fehlgeschlagen.');
+      return;
+    }
+    const parts=[];
+    if(j.imported && j.imported.length) parts.push(`${j.imported.length} importiert`);
+    if(j.skipped && j.skipped.length)   parts.push(`${j.skipped.length} übersprungen (Nummer existiert bereits)`);
+    if(j.limit && j.limit.length)       parts.push(`${j.limit.length} nicht importiert (Plan-Limit${j.limit_max?': '+j.limit_max:''})`);
+    if(j.invalid && j.invalid.length)   parts.push(`${j.invalid.length} ungültig (kein XrechnungMega-XML)`);
+    await UI_MODAL.alert(parts.length ? parts.join(' · ') : 'Keine Dateien verarbeitet.');
+    refreshInvoiceList(j.last || undefined);
+  }catch(e){
+    console.error(e);
+    UI_MODAL.alert('Netzwerkfehler beim Import.');
+  }finally{
+    input.value='';
+  }
 }
 
 async function openInvoicePdf(){

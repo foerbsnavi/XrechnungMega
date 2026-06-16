@@ -2,6 +2,10 @@
 
 Alle Versionen von XrechnungMega.
 
+## 1.0.8 (16.06.2026)
+
+- Neu: XML-Import — über „⬆ XML importieren“ in der Rechnungsübersicht lassen sich zuvor mit XrechnungMega erstellte Rechnungen (XML) wieder einlesen, auch mehrere auf einmal. Bereits vorhandene Rechnungsnummern werden übersprungen, der Plan-Rahmen wird beachtet. Es werden ausschließlich eigene XrechnungMega-Dateien akzeptiert.
+
 ## 1.0.7 (16.06.2026)
 
 - Neu: API-Schlüssel können jetzt ein Präfix für Rechnungsnummern tragen (z. B. „EK“ → EK_2026_0001). So lassen sich Rechnungen verschiedener Projekte oder Anbindungen eindeutig kennzeichnen und sortieren. Das Präfix wird automatisch vorangestellt, falls es noch fehlt — bestehende Anbindungen funktionieren unverändert weiter.
