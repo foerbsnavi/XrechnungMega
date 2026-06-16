@@ -1,0 +1,13 @@
+# Laufzeit-/Nutzerdaten nicht ins öffentliche Repo
+/daten/ausgang/*
+!/daten/ausgang/.gitkeep
+/daten/status.json
+/config/login_attempts.json
+
+# Lokale Backups des Selbst-Updates
+/_backup/
+*.bak
+
+# OS-/Editor-Müll
+.DS_Store
+Thumbs.db

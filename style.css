@@ -1,0 +1,110 @@
+@font-face{
+  font-display:auto;
+  font-family:'Brose';
+  font-style:normal;
+  font-weight:300;
+  src:url('https://daten.fabianbrose.de/typo/font.php?f=Brose.woff2') format('woff2'),
+      url('https://daten.fabianbrose.de/typo/font.php?f=Brose.woff') format('woff');
+}
+
+*{margin:0;padding:0;font-family:Brose,sans-serif}
+
+html,body{height:100%}
+body{min-height:100vh;display:flex;flex-direction:column;margin:0;line-height:1.3;font-size:13px;letter-spacing:.3px}
+
+.page-main{flex:1;padding:16px}
+
+h1,h2,h3,h4,h5,h6{font-weight:300!important}
+
+table{width:100%;border-collapse:collapse;margin-bottom:20px;white-space:nowrap}
+th,td{border:1px solid #ccc;padding:6px;text-align:left}
+th{background:#eee}
+tr:hover{background:#f5f5f5}
+table thead th{font-weight:300!important}
+
+.site-footer{margin-top:auto;padding:10px;font-size:12px;opacity:.75}
+.site-footer a{text-decoration:none; color:#fff;background-color: #111;padding:6px}
+.site-footer a:hover{text-decoration:underline}
+
+.popup-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background-color:rgba(0,0,0,.5);display:none;justify-content:center;align-items:center;z-index:1000}
+.popup{background:#fff;padding:50px 20px 20px;box-shadow:0 0 15px rgba(0,0,0,.3);max-width:800px;width:90%;position:relative;overflow-y:auto;max-height:90%}
+.popup .close{position:absolute;top:10px;right:20px;background:#333;color:#fff;border:none;font-size:18px;cursor:pointer;padding:5px 10px}
+
+.dina4{position:relative;max-width:800px;height:1000px;box-shadow:0 0 10px #ccc;padding:10px;margin-bottom:12px}
+.header,.recipient,.invoice-details,.table,.footer{margin-bottom:20px}
+.invoice-details{text-align:right}
+.select{width:100%}
+
+.modal-popup{max-width:420px;width:90%}
+.modal-message{margin-bottom:14px;white-space:normal}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end}
+.save-msg{margin-top:10px;font-weight:300!important;display:none;color:#306e31}
+
+.pointer{cursor:pointer}
+
+.betrag,.grau{background:#ccc;padding:6px;font-weight:300!important;text-align:left;margin-left:auto}
+
+.rechnungsbeschreibung{margin-top:140px}
+
+.invoice-table{width:100%;border-collapse:collapse;margin-top:10px}
+.invoice-table th,.invoice-table td{border:1px solid #ccc;padding:6px;text-align:left}
+.invoice-table th{background:#ccc}
+
+input,textarea{width:100%;border:none;box-sizing:border-box;padding:2px}
+textarea{resize:vertical;height:50px}
+
+button{padding:10px 20px;font-size:14px;background:#333;color:#fff;border:none;cursor:pointer}
+.btn-add{width:auto;display:inline-block;padding:10px 14px;line-height:1}
+
+.summary,.invoice-details{text-align:right;position:absolute;right:10px;width:240px}
+.summary{bottom:150px}
+
+.danke{margin-bottom:20px}
+
+.summary table,.invoice-details table{border-collapse:collapse;border:none}
+.summary table td,.invoice-details table td{border:none;padding:2px}
+
+.footer{position:absolute;bottom:0;margin-top:140px}
+
+.plain-select{
+  border:none;
+  background:transparent;
+  padding:0;
+  font:inherit;
+  color:inherit;
+  width:100%;
+  -webkit-appearance:none;
+  -moz-appearance:none;
+  appearance:none;
+}
+
+.print-select-value{display:none}
+
+.row-flash{outline:2px solid #000;outline-offset:-2px}
+
+#popup-overlay{z-index:1000}
+#modal-overlay{z-index:2000}
+#pdfpick-overlay{z-index:3000}
+
+/* ── Einstellungen / Firmendaten (einstellungen.php) ── */
+.fd-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;margin-bottom:.4rem}
+.fd-back{font-size:.875rem;color:#1f4e63;text-decoration:none}
+.fd-back:hover{text-decoration:underline}
+.fd-intro{color:#555;font-size:.92rem;margin:0 0 1.1rem;max-width:760px}
+.fd-msg{padding:.7rem 1rem;border-radius:8px;margin:0 0 1.1rem;font-size:.92rem;max-width:760px}
+.fd-msg-ok{background:#e7f6ee;color:#1f7a4d;border:1px solid #bfe6cf}
+.fd-msg-error{background:#fdecea;color:#992222;border:1px solid #f5c6c0}
+.fd-form{max-width:760px}
+.fd-card{border:1px solid #e3e7ee;border-radius:12px;padding:.6rem 1.25rem 1.25rem;margin:0 0 1.25rem}
+.fd-card legend{font-weight:700;color:#163a4b;padding:0 .4rem;font-size:1rem}
+.fd-grid{display:grid;grid-template-columns:1fr 1fr;gap:.8rem 1rem}
+.fd-feld{display:flex;flex-direction:column;gap:.25rem}
+.fd-feld.fd-col2{grid-column:1 / -1}
+.fd-feld span{font-size:.8rem;color:#6b7280}
+.fd-feld em{color:#c0392b;font-style:normal}
+.fd-feld input{width:100%;padding:.5rem .65rem;border:1px solid #d1d5db;border-radius:7px;font-size:.95rem;box-sizing:border-box;background:#fff}
+.fd-feld input:focus{outline:2px solid #1f4e63;outline-offset:1px;border-color:#1f4e63}
+.fd-actions{margin-top:.3rem}
+.fd-save{background:#1f4e63;color:#fff;border:0;border-radius:8px;padding:.7rem 1.5rem;font-size:1rem;font-weight:600;cursor:pointer}
+.fd-save:hover{background:#163a4b}
+@media(max-width:560px){.fd-grid{grid-template-columns:1fr}}

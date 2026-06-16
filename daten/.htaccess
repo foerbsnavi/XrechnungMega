@@ -1,0 +1,10 @@
+# XrechnungMega: Rechnungsdaten — Direktzugriff per HTTP verbieten.
+# Der Download von XML/PDF läuft kontrolliert über download.php / api_pdf.php.
+Options -Indexes
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>
