@@ -2,6 +2,11 @@
 
 Alle Versionen von XrechnungMega.
 
+## 1.0.7 (16.06.2026)
+
+- Neu: API-Schlüssel können jetzt ein Präfix für Rechnungsnummern tragen (z. B. „EK“ → EK_2026_0001). So lassen sich Rechnungen verschiedener Projekte oder Anbindungen eindeutig kennzeichnen und sortieren. Das Präfix wird automatisch vorangestellt, falls es noch fehlt — bestehende Anbindungen funktionieren unverändert weiter.
+- Verbesserung: Das Tool ist jetzt für Mobilgeräte optimiert — Rechnungsübersicht, Editor, Einstellungen und API-Verwaltung lassen sich auch auf dem Smartphone bequem bedienen. Die Desktop-Ansicht sowie die PDF- und Druckausgabe bleiben unverändert.
+
 ## 1.0.6 (16.06.2026)
 
 - Sicherheit (Selbst-Hosting): Erst-Einrichtung beim ersten Start statt Standard-Passwort; Passwörter werden als bcrypt-Hash gespeichert; Login mit CSRF- und Brute-Force-Schutz.

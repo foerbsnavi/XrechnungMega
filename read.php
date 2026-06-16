@@ -241,6 +241,7 @@ if ($isTemplate) {
 
 <input class="rechnungsbeschreibung" type="text" name="details[beschreibung]" value="<?php echo h($note); ?>">
 
+<div class="table-scroll" role="region" aria-label="Rechnungspositionen, horizontal scrollbar" tabindex="0">
 <table class="invoice-table">
   <thead>
     <tr><th>Beschreibung</th><th>Einheit</th><th>Menge</th><th>Einzelpreis</th><th>Gesamt</th><th class="noprint"></th></tr>
@@ -264,6 +265,7 @@ if ($isTemplate) {
   <?php endforeach; ?>
   </tbody>
 </table>
+</div>
 
 <button type="button" onclick="
   const tb=document.querySelector('.invoice-table tbody');

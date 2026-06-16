@@ -80,6 +80,9 @@ if ($apiKey === '') {
     $apiKey = trim((string)($_GET['api_key'] ?? ''));
 }
 
+// Token-Präfix für Rechnungsnummern (z. B. "EK" → EK_2026_0001). Leer = kein Präfix.
+$apiPrefix = '';
+
 // XR_PLAN_MAX_INVOICES: 0 = unbegrenzt (Standalone), sonst Plan-Limit (Plattform)
 if (defined('XR_MODE') && XR_MODE === 'platform') {
     // ── Plattform: Key → Account (globaler Index), Mega-Plan + aktiv prüfen ──
@@ -93,6 +96,7 @@ if (defined('XR_MODE') && XR_MODE === 'platform') {
         api_err('Die REST-API ist dem Mega-Plan vorbehalten.', 403, ['plan' => plan_label((string)($apiUser['plan'] ?? 'Basic'))]);
     }
     $uid = (string)$apiUser['id'];
+    $apiPrefix = (string)($entry['prefix'] ?? '');
     if (!defined('DATA_ROOT'))     define('DATA_ROOT', user_dir($uid) . '/rechnungen');
     if (!defined('OUTBOX_DIR'))    define('OUTBOX_DIR', DATA_ROOT . '/ausgang');
     if (!defined('TEMPLATE_FILE')) define('TEMPLATE_FILE', DATA_ROOT . '/vorlage.xml');
@@ -115,6 +119,7 @@ if (defined('XR_MODE') && XR_MODE === 'platform') {
     if ($apiKey === '' || !isset($allKeys[$apiKey]) || !($allKeys[$apiKey]['active'] ?? false)) {
         api_err('Ungültiger oder inaktiver API-Key', 401);
     }
+    $apiPrefix = (string)($allKeys[$apiKey]['prefix'] ?? '');
     $defaultsFile = __DIR__ . '/config/api_defaults.php';
     $apiDefaults  = is_file($defaultsFile) ? (array)(require $defaultsFile) : [];
     define('XR_PLAN_MAX_INVOICES', 0);
@@ -190,13 +195,16 @@ function api_get_invoice(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function api_create(): void {
-    global $body, $method, $apiDefaults;
+    global $body, $method, $apiDefaults, $apiPrefix;
 
     if ($method !== 'POST') api_err('Methode muss POST sein', 405);
 
     $data = merge_with_defaults($body, $apiDefaults);
 
     validate_required_fields($data);
+
+    // Token-Präfix voranstellen (z. B. EK_2026_0001), falls noch nicht vorhanden
+    $data['rechnungsnummer'] = xr_apply_prefix((string)($data['rechnungsnummer'] ?? ''), $apiPrefix);
 
     $rn      = trim(preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)($data['rechnungsnummer'] ?? '')), '_-');
     $outFile = rtrim(OUTBOX_DIR, '/\\') . DIRECTORY_SEPARATOR . $rn . '.xml';
@@ -236,7 +244,7 @@ function api_create(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function api_update(): void {
-    global $body, $method, $apiDefaults;
+    global $body, $method, $apiDefaults, $apiPrefix;
 
     if ($method !== 'PUT' && $method !== 'POST') api_err('Methode muss PUT sein', 405);
 
@@ -248,6 +256,9 @@ function api_update(): void {
     if (empty($data['rechnungsnummer'])) $data['rechnungsnummer'] = $id;
 
     validate_required_fields($data);
+
+    // Token-Präfix voranstellen, falls noch nicht vorhanden
+    $data['rechnungsnummer'] = xr_apply_prefix((string)$data['rechnungsnummer'], $apiPrefix);
 
     $newRn   = trim(preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$data['rechnungsnummer']), '_-');
     $outFile = rtrim(OUTBOX_DIR, '/\\') . DIRECTORY_SEPARATOR . $newRn . '.xml';
@@ -336,6 +347,20 @@ function api_status(): void {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Interne Hilfsfunktionen
+
+/**
+ * Stellt der Rechnungsnummer das Token-Präfix voran (z. B. "EK" → "EK_2026_0001"),
+ * sofern ein Präfix gesetzt ist und die Nummer nicht bereits damit beginnt.
+ * Rückwärtskompatibel: Clients, die bereits "EK_…" senden, bleiben unverändert.
+ */
+function xr_apply_prefix(string $rn, string $prefix): string {
+    $prefix = trim($prefix);
+    if ($prefix === '') return $rn;
+    // Schon mit "PREFIX_" am Anfang (Groß-/Kleinschreibung egal)? → unverändert
+    if (stripos($rn, $prefix . '_') === 0) return $rn;
+    $rn = ltrim($rn, '_-');
+    return $prefix . '_' . $rn;
+}
 
 function get_id_param(): string {
     $id = trim(preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_GET['id'] ?? '')));

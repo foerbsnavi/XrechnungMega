@@ -35,6 +35,13 @@ if ($platform) {
 if (session_status() === PHP_SESSION_NONE) session_start();
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
 
+// Präfix säubern: nur A-Z/0-9, Großbuchstaben, max. 8 Zeichen (z. B. "EK")
+function sanitize_prefix(string $p): string {
+    $p = strtoupper(trim($p));
+    $p = preg_replace('/[^A-Z0-9]/', '', $p);
+    return substr((string)$p, 0, 8);
+}
+
 function keys_load(string $file, bool $platform): array {
     if (!is_file($file)) return [];
     if ($platform) { $j = json_decode((string)@file_get_contents($file), true); return is_array($j) ? $j : []; }
@@ -49,10 +56,11 @@ function keys_save(string $file, array $keys, bool $platform): void {
     }
     $lines = ["<?php\nreturn [\n"];
     foreach ($keys as $k => $v) {
-        $name    = addslashes((string)($v['name'] ?? ''));
+        $name    = var_export((string)($v['name'] ?? ''), true);
+        $prefix  = var_export((string)($v['prefix'] ?? ''), true);
         $active  = ($v['active'] ?? false) ? 'true' : 'false';
-        $created = addslashes((string)($v['erstellt'] ?? date('Y-m-d')));
-        $lines[] = "    " . var_export($k, true) . " => [\n        'name'     => '$name',\n        'active'   => $active,\n        'erstellt' => '$created',\n    ],\n";
+        $created = var_export((string)($v['erstellt'] ?? date('Y-m-d')), true);
+        $lines[] = "    " . var_export($k, true) . " => [\n        'name'     => $name,\n        'prefix'   => $prefix,\n        'active'   => $active,\n        'erstellt' => $created,\n    ],\n";
     }
     $lines[] = "];\n";
     @file_put_contents($file, implode('', $lines), LOCK_EX);
@@ -68,12 +76,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $act = (string)($_POST['act'] ?? '');
     if ($act === 'add') {
         $name = trim((string)($_POST['name'] ?? ''));
+        $prefix = sanitize_prefix((string)($_POST['prefix'] ?? ''));
         if ($name === '') { $msg = 'Projektname darf nicht leer sein.'; $msgType = 'error'; }
         else {
             $newKey = 'xrm_' . bin2hex(random_bytes(22));
-            $keys[$newKey] = ['name' => $name, 'active' => true, 'erstellt' => date('Y-m-d')];
+            $keys[$newKey] = ['name' => $name, 'prefix' => $prefix, 'active' => true, 'erstellt' => date('Y-m-d')];
             keys_save($keysFile, $keys, $platform);
-            if ($platform) apikeys_index_set($newKey, ['uid' => $uid, 'enabled' => true, 'name' => $name]);
+            if ($platform) apikeys_index_set($newKey, ['uid' => $uid, 'enabled' => true, 'name' => $name, 'prefix' => $prefix]);
             $_SESSION['xr_new_key'] = $newKey;   // einmalig anzeigen, NICHT über die URL
             $msg = 'Neuer Key erstellt — bitte unten kopieren.'; $msgType = 'success';
         }
@@ -82,8 +91,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($keys[$k])) {
             $keys[$k]['active'] = !($keys[$k]['active'] ?? true);
             keys_save($keysFile, $keys, $platform);
-            if ($platform) { $gi = apikeys_index_get($k); if (!$gi || ($gi['uid'] ?? '') === $uid) apikeys_index_set($k, ['uid' => $uid, 'enabled' => $keys[$k]['active'], 'name' => $keys[$k]['name'] ?? '']); }
+            if ($platform) { $gi = apikeys_index_get($k); if (!$gi || ($gi['uid'] ?? '') === $uid) apikeys_index_set($k, ['uid' => $uid, 'enabled' => $keys[$k]['active'], 'name' => $keys[$k]['name'] ?? '', 'prefix' => $keys[$k]['prefix'] ?? '']); }
             $msg = $keys[$k]['active'] ? 'Key aktiviert.' : 'Key deaktiviert.'; $msgType = 'success';
+        }
+    } elseif ($act === 'prefix') {
+        $k = (string)($_POST['key'] ?? '');
+        if (isset($keys[$k])) {
+            $prefix = sanitize_prefix((string)($_POST['prefix'] ?? ''));
+            $keys[$k]['prefix'] = $prefix;
+            keys_save($keysFile, $keys, $platform);
+            if ($platform) { $gi = apikeys_index_get($k); if ($gi && ($gi['uid'] ?? '') === $uid) apikeys_index_set($k, ['uid' => $uid, 'enabled' => $keys[$k]['active'] ?? true, 'name' => $keys[$k]['name'] ?? '', 'prefix' => $prefix]); }
+            $msg = $prefix !== '' ? 'Präfix gespeichert: ' . $prefix . '_' : 'Präfix entfernt.'; $msgType = 'success';
         }
     } elseif ($act === 'delete') {
         $k = (string)($_POST['key'] ?? '');
@@ -147,6 +165,15 @@ $apiBase = $platform ? 'https://xrechnung.brosemedien.de/app/xrechnung/api.php' 
     .m-put    { background:#fef9c3; color:#854d0e; }
     .m-delete { background:#fecaca; color:#dc2626; }
     .api-keys-pre { font-size:.78rem; overflow-x:auto; margin:0; }
+    .prefix-form { display:flex; gap:.3rem; align-items:center; }
+    .prefix-input { width:74px; padding:.3rem .4rem; border:1.5px solid #d1d5db; border-radius:6px; font-size:.8rem; text-transform:uppercase; box-sizing:border-box; }
+    .prefix-input:focus { outline:2px solid #1f4e63; border-color:#1f4e63; }
+    .add-form .prefix-input { width:auto; min-width:200px; }
+    @media (max-width:640px) {
+      .add-form { flex-direction:column; align-items:stretch; }
+      .add-form input[type=text], .add-form .prefix-input { min-width:0; width:100%; }
+      .add-form button { width:100%; }
+    }
   </style>
 </head>
 <body>
@@ -169,14 +196,25 @@ $apiBase = $platform ? 'https://xrechnung.brosemedien.de/app/xrechnung/api.php' 
   <?php if (empty($keys)): ?>
     <p style="color:#6b7280;font-size:.875rem;">Noch keine API-Keys vorhanden.</p>
   <?php else: ?>
+  <div class="table-scroll" role="region" aria-label="API-Schlüssel, horizontal scrollbar" tabindex="0">
   <table class="api-table">
     <thead>
-      <tr><th>Projekt</th><th>API-Key</th><th>Erstellt</th><th>Status</th><th>Aktionen</th></tr>
+      <tr><th>Projekt</th><th>Präfix</th><th>API-Key</th><th>Erstellt</th><th>Status</th><th>Aktionen</th></tr>
     </thead>
     <tbody>
       <?php foreach ($keys as $key => $info): ?>
       <tr>
         <td><strong><?= htmlspecialchars((string)($info['name'] ?? '')) ?></strong></td>
+        <td>
+          <form method="post" class="prefix-form">
+            <input type="hidden" name="csrf" value="<?= $csrf ?>">
+            <input type="hidden" name="act" value="prefix">
+            <input type="hidden" name="key" value="<?= htmlspecialchars((string)$key) ?>">
+            <?php $pNameEsc = htmlspecialchars((string)($info['name'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
+            <input type="text" name="prefix" class="prefix-input" maxlength="8" placeholder="—" value="<?= htmlspecialchars((string)($info['prefix'] ?? '')) ?>" aria-label="Präfix für Rechnungsnummern (<?= $pNameEsc ?>)">
+            <button class="btn-sm" type="submit" title="Präfix speichern" aria-label="Präfix für <?= $pNameEsc ?> speichern">✓</button>
+          </form>
+        </td>
         <td><span class="key-mono" title="Klicken zum Kopieren" onclick="navigator.clipboard.writeText(this.textContent).then(()=>this.style.background='#bbf7d0').catch(()=>{}); setTimeout(()=>this.style.background='',1200)"><?= htmlspecialchars((string)$key) ?></span></td>
         <td><?= htmlspecialchars((string)($info['erstellt'] ?? '–')) ?></td>
         <td><?php if ($info['active'] ?? false): ?><span class="badge-active">Aktiv</span><?php else: ?><span class="badge-inactive">Inaktiv</span><?php endif; ?></td>
@@ -198,15 +236,18 @@ $apiBase = $platform ? 'https://xrechnung.brosemedien.de/app/xrechnung/api.php' 
       <?php endforeach; ?>
     </tbody>
   </table>
+  </div>
   <?php endif; ?>
 
   <form method="post" class="add-form">
     <input type="hidden" name="csrf" value="<?= $csrf ?>">
     <input type="hidden" name="act" value="add">
     <input type="text" name="name" placeholder="Projektname (z. B. Shop Alpha)" required>
+    <input type="text" name="prefix" class="prefix-input" maxlength="8" placeholder="Präfix (optional, z. B. EK)" aria-label="Präfix für Rechnungsnummern">
     <button type="submit" class="btn-sm" style="background:#1f4e63;color:#fff;border-color:#1f4e63;padding:.5rem 1rem;">+ Neuen Key generieren</button>
   </form>
   <p class="hint">Der Key wird zufällig generiert. Nach dem Erstellen den Key kopieren und im Projekt hinterlegen — er wird danach nicht erneut angezeigt.</p>
+  <p class="hint">Das <strong>Präfix</strong> wird Rechnungsnummern dieses Keys vorangestellt (z. B. <code>EK</code> → <code>EK_2026_0001</code>), sofern die Nummer es nicht schon enthält. So lassen sich Rechnungen je Projekt eindeutig kennzeichnen und sortieren. Leer = kein Präfix.</p>
 
   <div class="endpoint-box">
     <h3>API-Endpunkte</h3>

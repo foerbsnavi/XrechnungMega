@@ -189,6 +189,7 @@ if (isset($_GET['list'])) {
 </div>
 <input id="invoice-filter" class="noprint" type="text" placeholder="Filtern… (alle Spalten)" autocomplete="off" style="width:200px;max-width:100%;box-sizing:border-box;margin:10px 0 12px;border:1px solid #ccc;padding:8px">
 
+<div class="table-scroll noprint" role="region" aria-label="Rechnungsübersicht, horizontal scrollbar" tabindex="0">
 <table id="invoice-table" class="noprint">
   <thead>
     <tr>
@@ -205,6 +206,7 @@ if (isset($_GET['list'])) {
 </tbody>
 
 </table>
+</div>
 
 <div class="toolbar noprint">
   <button type="button" class="btn-add" onclick="loadTemplate()">+</button>

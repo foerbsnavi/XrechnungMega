@@ -108,3 +108,32 @@ button{padding:10px 20px;font-size:14px;background:#333;color:#fff;border:none;c
 .fd-save{background:#1f4e63;color:#fff;border:0;border-radius:8px;padding:.7rem 1.5rem;font-size:1rem;font-weight:600;cursor:pointer}
 .fd-save:hover{background:#163a4b}
 @media(max-width:560px){.fd-grid{grid-template-columns:1fr}}
+
+/* ── Tabellen horizontal scrollbar (verhindert Abschneiden auf schmalen Screens) ── */
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+@media print{.table-scroll{overflow:visible}}
+
+/* ── Mobil-Ansicht (NUR Screen — Druck/PDF/A4-Layout bleibt unberührt) ── */
+@media screen and (max-width:768px){
+  .page-main{padding:12px}
+
+  /* Eingaben nicht unter 16px → verhindert Auto-Zoom auf iOS */
+  input,textarea,select{font-size:16px}
+
+  /* Popup nimmt fast die volle Breite ein */
+  .popup{width:95%;padding:42px 12px 16px}
+
+  /* A4-„Papier"-Box wird zur gestapelten Spalte:
+     absolute positionierte Blöcke fließen wieder normal untereinander */
+  .dina4{height:auto;max-width:100%;box-shadow:none;padding:10px 0;margin-bottom:0}
+  .invoice-details,.summary{position:static;right:auto;bottom:auto;width:100%;text-align:left;margin-bottom:20px}
+  .footer{position:static;bottom:auto;margin-top:24px}
+  .rechnungsbeschreibung{margin-top:16px}
+
+  /* Summen-/Detail-Tabellen über die volle Breite, label links */
+  .summary table,.invoice-details table{width:100%}
+
+  /* Aktions-Buttons unter dem Editor umbrechen lassen */
+  #actionBar{display:flex;flex-wrap:wrap;gap:8px}
+  #actionBar button,#actionBar .button{flex:1 1 auto;text-align:center}
+}
