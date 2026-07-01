@@ -24,9 +24,21 @@ function normPhone($v){
   if(strlen($digits)<3) return '000';
   return $digits;
 }
+
+// Escaped Textinhalt korrekt (auch &, <, >, ", '): NIE Text als 2. Argument von
+// createElement uebergeben (das wird nicht escaped und bricht bei & ab), sondern
+// per createTextNode anhaengen.
+function el($dom, $name, $val = ''){
+  // Fuer XML 1.0 unzulaessige Steuerzeichen entfernen -> Dokument bleibt immer wohlgeformt/valide
+  $val = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', (string)$val);
+  $e = $dom->createElement($name);
+  $e->appendChild($dom->createTextNode($val));
+  return $e;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['check'])) {
   header('Content-Type: application/json; charset=UTF-8');
-  $token = (string)($_GET['csrf'] ?? '');
+  $token = (string)($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
   if (!$token || !isset($_SESSION['csrf']) || !hash_equals($_SESSION['csrf'], $token)) j(403,['ok'=>false,'msg'=>'Ungültiges Token']);
   $raw = (string)($_GET['rn'] ?? '');
   $rn = trim(preg_replace('/[^a-zA-Z0-9_-]/','_', $raw), '_-');
@@ -120,7 +132,7 @@ if ($targetExists && !$force && ($prev === '' || $prev === 'vorlage.xml' || $pre
 if ($prev !== '' && preg_match('/^[\w.\-]+\.xml$/i',$prev) && $prev !== 'vorlage.xml' && $prev !== $newBase) {
   $oldXml = realpath(OUTBOX_DIR . DIRECTORY_SEPARATOR . $prev);
   $base = realpath(OUTBOX_DIR);
-  if ($oldXml && $base && strpos($oldXml,$base)===0 && is_file($oldXml)) @unlink($oldXml);
+  if ($oldXml && $base && strpos($oldXml,$base . DIRECTORY_SEPARATOR)===0 && is_file($oldXml)) @unlink($oldXml);
 }
 
 $iban = strtoupper(preg_replace('/\s+/','', (string)($bank['iban'] ?? '')));
@@ -152,6 +164,7 @@ if (preg_match('/^(\d{5})\s*(.*)$/', trim($emp_plzort), $m2)) { $emp_plz=$m2[1] 
 
 $buyerEid = trim((string)($emp['email'] ?? ''));
 if ($buyerEid === '') fail('Fehler: Käufer elektronische Adresse (BT-34) fehlt.',400);
+ if (!filter_var($buyerEid, FILTER_VALIDATE_EMAIL)) fail('Fehler: Käufer elektronische Adresse ist keine gültige E-Mail.',400);
 
 $dom = new DOMDocument('1.0','UTF-8');
 $dom->formatOutput = true;
@@ -162,74 +175,75 @@ $inv->setAttribute('xmlns:cbc','urn:oasis:names:specification:ubl:schema:xsd:Com
 $inv->setAttribute('xmlns:ext','urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2');
 $dom->appendChild($inv);
 
-$inv->appendChild($dom->createElement('cbc:CustomizationID','urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0'));
-$inv->appendChild($dom->createElement('cbc:ProfileID','urn:fdc:peppol.eu:2017:poacc:billing:01:1.0'));
-$inv->appendChild($dom->createElement('cbc:ID',$rn));
-$inv->appendChild($dom->createElement('cbc:IssueDate',$issueDate));
-$inv->appendChild($dom->createElement('cbc:DueDate',$dueDate));
+$inv->appendChild(el($dom, 'cbc:CustomizationID','urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0'));
+$inv->appendChild(el($dom, 'cbc:ProfileID','urn:fdc:peppol.eu:2017:poacc:billing:01:1.0'));
+$inv->appendChild(el($dom, 'cbc:ID',$rn));
+$inv->appendChild(el($dom, 'cbc:IssueDate',$issueDate));
+$inv->appendChild(el($dom, 'cbc:DueDate',$dueDate));
 $invType=invoiceTypeCode($det['typ'] ?? '380');
-$inv->appendChild($dom->createElement('cbc:InvoiceTypeCode',$invType));
+$inv->appendChild(el($dom, 'cbc:InvoiceTypeCode',$invType));
 
 $preceding=trim((string)($det['vorgaenger_rechnung'] ?? ''));
 if($invType==='384' && $preceding!==''){
   $br=$dom->createElement('cac:BillingReference');
   $idr=$dom->createElement('cac:InvoiceDocumentReference');
-  $idr->appendChild($dom->createElement('cbc:ID',$preceding));
+  $idr->appendChild(el($dom, 'cbc:ID',$preceding));
   $br->appendChild($idr);
   $inv->appendChild($br);
 }
 
-if (!empty($det['beschreibung'])) $inv->appendChild($dom->createElement('cbc:Note', (string)$det['beschreibung']));
-$inv->appendChild($dom->createElement('cbc:DocumentCurrencyCode','EUR'));
+if (!empty($det['beschreibung'])) $inv->appendChild(el($dom, 'cbc:Note', (string)$det['beschreibung']));
+$inv->appendChild(el($dom, 'cbc:DocumentCurrencyCode','EUR'));
 $buyerRef = trim((string)($det['buyer_reference'] ?? ''));
 if ($buyerRef === '') $buyerRef = $buyerEid;
 $buyerRef = preg_replace('/[\x00-\x1F\x7F]/', '', $buyerRef);
-$inv->appendChild($dom->createElement('cbc:BuyerReference', $buyerRef));
+$inv->appendChild(el($dom, 'cbc:BuyerReference', $buyerRef));
 
 
 $supp = $dom->createElement('cac:AccountingSupplierParty');
 $sp = $dom->createElement('cac:Party');
 
 $sellerEid = trim((string)($abs['email'] ?? ''));
+if ($sellerEid !== '' && !filter_var($sellerEid, FILTER_VALIDATE_EMAIL)) fail('Fehler: Absender-E-Mail ist keine gültige E-Mail.',400);
 if ($sellerEid !== '') {
-  $eid = $dom->createElement('cbc:EndpointID', $sellerEid);
+  $eid = el($dom, 'cbc:EndpointID', $sellerEid);
   $eid->setAttribute('schemeID','EM');
   $sp->appendChild($eid);
 }
 
 $pn = $dom->createElement('cac:PartyName');
-$pn->appendChild($dom->createElement('cbc:Name',(string)($abs['name'] ?? '')));
+$pn->appendChild(el($dom, 'cbc:Name',(string)($abs['name'] ?? '')));
 $sp->appendChild($pn);
 
 $sellerPhone = normPhone($abs['telefon'] ?? '');
 $contact = $dom->createElement('cac:Contact');
-$contact->appendChild($dom->createElement('cbc:Name', (string)($abs['name'] ?? '')));
-$contact->appendChild($dom->createElement('cbc:Telephone', $sellerPhone));
-if ($sellerEid !== '') $contact->appendChild($dom->createElement('cbc:ElectronicMail', $sellerEid));
+$contact->appendChild(el($dom, 'cbc:Name', (string)($abs['name'] ?? '')));
+$contact->appendChild(el($dom, 'cbc:Telephone', $sellerPhone));
+if ($sellerEid !== '') $contact->appendChild(el($dom, 'cbc:ElectronicMail', $sellerEid));
 $sp->appendChild($contact);
 
 
 
 $addr = $dom->createElement('cac:PostalAddress');
-$addr->appendChild($dom->createElement('cbc:StreetName',(string)($abs['adresse'] ?? '')));
-$addr->appendChild($dom->createElement('cbc:CityName',$abs_ort));
-$addr->appendChild($dom->createElement('cbc:PostalZone',$abs_plz));
+$addr->appendChild(el($dom, 'cbc:StreetName',(string)($abs['adresse'] ?? '')));
+$addr->appendChild(el($dom, 'cbc:CityName',$abs_ort));
+$addr->appendChild(el($dom, 'cbc:PostalZone',$abs_plz));
 $cty = $dom->createElement('cac:Country');
-$cty->appendChild($dom->createElement('cbc:IdentificationCode','DE'));
+$cty->appendChild(el($dom, 'cbc:IdentificationCode','DE'));
 $addr->appendChild($cty);
 $sp->appendChild($addr);
 
 if ($ustid !== '') {
   $pts = $dom->createElement('cac:PartyTaxScheme');
-  $pts->appendChild($dom->createElement('cbc:CompanyID',$ustid));
+  $pts->appendChild(el($dom, 'cbc:CompanyID',$ustid));
   $ts= $dom->createElement('cac:TaxScheme');
-  $ts->appendChild($dom->createElement('cbc:ID','VAT'));
+  $ts->appendChild(el($dom, 'cbc:ID','VAT'));
   $pts->appendChild($ts);
   $sp->appendChild($pts);
 }
 
 $ple = $dom->createElement('cac:PartyLegalEntity');
-$ple->appendChild($dom->createElement('cbc:RegistrationName',(string)($abs['name'] ?? '')));
+$ple->appendChild(el($dom, 'cbc:RegistrationName',(string)($abs['name'] ?? '')));
 $sp->appendChild($ple);
 
 $supp->appendChild($sp);
@@ -238,25 +252,25 @@ $inv->appendChild($supp);
 $cust = $dom->createElement('cac:AccountingCustomerParty');
 $cp = $dom->createElement('cac:Party');
 
-$ceid = $dom->createElement('cbc:EndpointID', $buyerEid);
+$ceid = el($dom, 'cbc:EndpointID', $buyerEid);
 $ceid->setAttribute('schemeID','EM');
 $cp->appendChild($ceid);
 
 $cpn = $dom->createElement('cac:PartyName');
-$cpn->appendChild($dom->createElement('cbc:Name',(string)($emp['name'] ?? '')));
+$cpn->appendChild(el($dom, 'cbc:Name',(string)($emp['name'] ?? '')));
 $cp->appendChild($cpn);
 
 $caddr = $dom->createElement('cac:PostalAddress');
-$caddr->appendChild($dom->createElement('cbc:StreetName',(string)($emp['adresse'] ?? '')));
-$caddr->appendChild($dom->createElement('cbc:CityName',$emp_ort));
-$caddr->appendChild($dom->createElement('cbc:PostalZone',$emp_plz));
+$caddr->appendChild(el($dom, 'cbc:StreetName',(string)($emp['adresse'] ?? '')));
+$caddr->appendChild(el($dom, 'cbc:CityName',$emp_ort));
+$caddr->appendChild(el($dom, 'cbc:PostalZone',$emp_plz));
 $ccty = $dom->createElement('cac:Country');
-$ccty->appendChild($dom->createElement('cbc:IdentificationCode','DE'));
+$ccty->appendChild(el($dom, 'cbc:IdentificationCode','DE'));
 $caddr->appendChild($ccty);
 $cp->appendChild($caddr);
 
 $cle = $dom->createElement('cac:PartyLegalEntity');
-$cle->appendChild($dom->createElement('cbc:RegistrationName',(string)($emp['name'] ?? '')));
+$cle->appendChild(el($dom, 'cbc:RegistrationName',(string)($emp['name'] ?? '')));
 $cp->appendChild($cle);
 
 $cust->appendChild($cp);
@@ -265,23 +279,23 @@ $inv->appendChild($cust);
 $delNode = null;
 if ($serviceDate !== '') {
   $delNode = $dom->createElement('cac:Delivery');
-  $delNode->appendChild($dom->createElement('cbc:ActualDeliveryDate', $serviceDate));
+  $delNode->appendChild(el($dom, 'cbc:ActualDeliveryDate', $serviceDate));
   $inv->appendChild($delNode);
 }
 
 $pm = $dom->createElement('cac:PaymentMeans');
-$pm->appendChild($dom->createElement('cbc:PaymentMeansCode', (string)($pay['code'] ?? '58')));
+$pm->appendChild(el($dom, 'cbc:PaymentMeansCode', (string)($pay['code'] ?? '58')));
 $payId = (string)($pay['id'] ?? $rn);
-if ($payId !== '') $pm->appendChild($dom->createElement('cbc:PaymentID', $payId));
+if ($payId !== '') $pm->appendChild(el($dom, 'cbc:PaymentID', $payId));
 
 $acc = $dom->createElement('cac:PayeeFinancialAccount');
-$acc->appendChild($dom->createElement('cbc:ID', $iban));
-$acc->appendChild($dom->createElement('cbc:Name', $payeeName));
+$acc->appendChild(el($dom, 'cbc:ID', $iban));
+$acc->appendChild(el($dom, 'cbc:Name', $payeeName));
 
 if ($bic !== '' || $bankName !== '') {
   $branch = $dom->createElement('cac:FinancialInstitutionBranch');
-  if ($bic !== '') $branch->appendChild($dom->createElement('cbc:ID', $bic));
-  if ($bankName !== '') $branch->appendChild($dom->createElement('cbc:Name', $bankName));
+  if ($bic !== '') $branch->appendChild(el($dom, 'cbc:ID', $bic));
+  if ($bankName !== '') $branch->appendChild(el($dom, 'cbc:Name', $bankName));
   $acc->appendChild($branch);
 }
 
@@ -310,32 +324,32 @@ foreach ($pos as $p) {
   $taxBuckets[$rate] = ($taxBuckets[$rate] ?? 0.0) + $lineNet;
 
   $il = $dom->createElement('cac:InvoiceLine');
-  $il->appendChild($dom->createElement('cbc:ID', ++$idx));
+  $il->appendChild(el($dom, 'cbc:ID', ++$idx));
 
-  $qtyEl = $dom->createElement('cbc:InvoicedQuantity', s2($qty));
+  $qtyEl = el($dom, 'cbc:InvoicedQuantity', s2($qty));
   $qtyEl->setAttribute('unitCode', unitCode((string)($p['einheit'] ?? 'HUR')));
   $il->appendChild($qtyEl);
 
-  $le = $dom->createElement('cbc:LineExtensionAmount', s2($lineNet));
+  $le = el($dom, 'cbc:LineExtensionAmount', s2($lineNet));
   $le->setAttribute('currencyID','EUR');
   $il->appendChild($le);
 
   $item = $dom->createElement('cac:Item');
-  $item->appendChild($dom->createElement('cbc:Description', $desc));
-  $item->appendChild($dom->createElement('cbc:Name', $desc));
+  $item->appendChild(el($dom, 'cbc:Description', $desc));
+  $item->appendChild(el($dom, 'cbc:Name', $desc));
 
   $ctg = $dom->createElement('cac:ClassifiedTaxCategory');
-  $ctg->appendChild($dom->createElement('cbc:ID', $rate>0?'S':'Z'));
-  $ctg->appendChild($dom->createElement('cbc:Percent', s2($rate)));
+  $ctg->appendChild(el($dom, 'cbc:ID', $rate>0?'S':'Z'));
+  $ctg->appendChild(el($dom, 'cbc:Percent', s2($rate)));
   $ts2 = $dom->createElement('cac:TaxScheme');
-  $ts2->appendChild($dom->createElement('cbc:ID','VAT'));
+  $ts2->appendChild(el($dom, 'cbc:ID','VAT'));
   $ctg->appendChild($ts2);
   $item->appendChild($ctg);
 
   $il->appendChild($item);
 
   $priceEl = $dom->createElement('cac:Price');
-  $pa = $dom->createElement('cbc:PriceAmount', s2($price));
+  $pa = el($dom, 'cbc:PriceAmount', s2($price));
   $pa->setAttribute('currencyID','EUR');
   $priceEl->appendChild($pa);
   $il->appendChild($priceEl);
@@ -398,26 +412,26 @@ foreach ($taxBases as $rate=>$taxable) $totalTax += round(((float)$taxable) * ((
 $totalTax = round($totalTax, 2);
 
 $taxTotal = $dom->createElement('cac:TaxTotal');
-$taxAmt = $dom->createElement('cbc:TaxAmount', s2($totalTax));
+$taxAmt = el($dom, 'cbc:TaxAmount', s2($totalTax));
 $taxAmt->setAttribute('currencyID','EUR');
 $taxTotal->appendChild($taxAmt);
 
 foreach ($taxBases as $rate=>$taxable) {
   $sub = $dom->createElement('cac:TaxSubtotal');
 
-  $ta = $dom->createElement('cbc:TaxableAmount', s2($taxable));
+  $ta = el($dom, 'cbc:TaxableAmount', s2($taxable));
   $ta->setAttribute('currencyID','EUR');
   $sub->appendChild($ta);
 
-  $t = $dom->createElement('cbc:TaxAmount', s2(round(((float)$taxable)*((float)$rate)/100,2)));
+  $t = el($dom, 'cbc:TaxAmount', s2(round(((float)$taxable)*((float)$rate)/100,2)));
   $t->setAttribute('currencyID','EUR');
   $sub->appendChild($t);
 
   $cat = $dom->createElement('cac:TaxCategory');
-  $cat->appendChild($dom->createElement('cbc:ID', ((float)$rate)>0?'S':'Z'));
-  $cat->appendChild($dom->createElement('cbc:Percent', s2($rate)));
+  $cat->appendChild(el($dom, 'cbc:ID', ((float)$rate)>0?'S':'Z'));
+  $cat->appendChild(el($dom, 'cbc:Percent', s2($rate)));
   $scheme = $dom->createElement('cac:TaxScheme');
-  $scheme->appendChild($dom->createElement('cbc:ID','VAT'));
+  $scheme->appendChild(el($dom, 'cbc:ID','VAT'));
   $cat->appendChild($scheme);
   $sub->appendChild($cat);
 
@@ -433,12 +447,12 @@ $payable = round($taxInclusive - $prepaid, 2);
 if ($payable < 0.0) $payable = 0.0;
 
 $legal = $dom->createElement('cac:LegalMonetaryTotal');
-$e = $dom->createElement('cbc:LineExtensionAmount', s2($net)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
-$e = $dom->createElement('cbc:TaxExclusiveAmount', s2($taxExclusive)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
-$e = $dom->createElement('cbc:TaxInclusiveAmount', s2($taxInclusive)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
-$e = $dom->createElement('cbc:AllowanceTotalAmount', s2($allow)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
-$e = $dom->createElement('cbc:PrepaidAmount', s2($prepaid)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
-$e = $dom->createElement('cbc:PayableAmount', s2($payable)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:LineExtensionAmount', s2($net)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:TaxExclusiveAmount', s2($taxExclusive)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:TaxInclusiveAmount', s2($taxInclusive)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:AllowanceTotalAmount', s2($allow)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:PrepaidAmount', s2($prepaid)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
+$e = el($dom, 'cbc:PayableAmount', s2($payable)); $e->setAttribute('currencyID','EUR'); $legal->appendChild($e);
 $inv->appendChild($legal);
 
 foreach ($lineNodes as $n) $inv->appendChild($n);

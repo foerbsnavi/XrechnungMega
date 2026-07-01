@@ -2,6 +2,12 @@
 
 Alle Versionen von XrechnungMega.
 
+## 1.0.9 (01.07.2026)
+
+- Behoben: Sonderzeichen wie „&“, „<“ oder „>“ in der Positionsbeschreibung – und in weiteren Textfeldern wie Namen, Adressen oder der Rechnungs-Notiz – wurden bisher beim Speichern ohne Hinweis abgeschnitten. Jetzt werden sie korrekt gespeichert und bleiben in XML und PDF vollständig erhalten.
+- Sicherheit & Konformität: Die E-Mail-Adressen von Empfänger und Absender werden nun auf ein gültiges Format geprüft, damit erzeugte Rechnungen zuverlässig dem XRechnung-Standard (EN 16931) entsprechen.
+- Technische Härtung: Das interne Sicherheits-Token wird nicht mehr über die Adresszeile übertragen, und der Schutz beim Aufräumen alter Rechnungsdateien wurde verschärft.
+
 ## 1.0.8 (16.06.2026)
 
 - Neu: XML-Import — über „⬆ XML importieren“ in der Rechnungsübersicht lassen sich zuvor mit XrechnungMega erstellte Rechnungen (XML) wieder einlesen, auch mehrere auf einmal. Bereits vorhandene Rechnungsnummern werden übersprungen, der Plan-Rahmen wird beachtet. Es werden ausschließlich eigene XrechnungMega-Dateien akzeptiert.

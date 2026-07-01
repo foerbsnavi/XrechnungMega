@@ -518,8 +518,8 @@ function baseNameSafe(v){ return String(v??'').split('/').pop().split('\\').pop(
 function sanitizeInvoiceNumber(v){ return String(v??'').replace(/[^a-zA-Z0-9_-]/g,'_').replace(/^[_-]+|[_-]+$/g,''); }
 
 async function invoiceExists(rn){
-  const url = `save.php?check=1&rn=${encodeURIComponent(rn)}&csrf=${encodeURIComponent(window.CSRF||'')}`;
-  const r = await fetch(url, {headers:{'Accept':'application/json'}});
+  const url = `save.php?check=1&rn=${encodeURIComponent(rn)}`;
+  const r = await fetch(url, {headers:{'Accept':'application/json','X-CSRF-Token':(window.CSRF||'')}});
   const j = await r.json();
   return !!(j && j.ok && j.exists);
 }
