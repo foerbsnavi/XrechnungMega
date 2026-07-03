@@ -2,6 +2,11 @@
 
 Alle Versionen von XrechnungMega.
 
+## 1.0.10 (03.07.2026)
+
+- Behoben: Rechnungen mit einem Rabatt (Nachlass) werden jetzt vollständig normkonform nach XRechnung (EN 16931) erzeugt — der Rabatt wird als eigener Abschlag ausgewiesen und die ausgewiesene Steuerbasis stimmt mit dem Rechnungsbetrag überein. Zuvor konnten rabattierte Rechnungen bei der amtlichen Prüfung (KoSIT) abgewiesen werden. Betrifft die Rechnungserstellung über die REST-API im Selbst-Hosting.
+- Behoben: Bei Korrektur- und Stornorechnungen stand der Verweis auf die ursprüngliche Rechnung an der falschen Stelle im XML — die Reihenfolge entspricht jetzt dem XRechnung-Standard.
+
 ## 1.0.9 (01.07.2026)
 
 - Behoben: Sonderzeichen wie „&“, „<“ oder „>“ in der Positionsbeschreibung – und in weiteren Textfeldern wie Namen, Adressen oder der Rechnungs-Notiz – wurden bisher beim Speichern ohne Hinweis abgeschnitten. Jetzt werden sie korrekt gespeichert und bleiben in XML und PDF vollständig erhalten.
