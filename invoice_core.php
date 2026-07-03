@@ -398,7 +398,7 @@ function xr_build_invoice(array $data, string $outFile): array {
     if ($idx === 0) return ['ok' => false, 'error' => 'Keine Positionen angegeben'];
 
     // Rabatt & Vorauszahlung
-    $allow   = max(0.0, min($net, (float)xr_clean_currency($data['rabatt'] ?? '0')));
+    $allow   = round(max(0.0, min($net, (float)xr_clean_currency($data['rabatt'] ?? '0'))), 2);
     $prepaid = max(0.0, (float)xr_clean_currency($data['vorauszahlung'] ?? '0'));
 
     $taxBases = $taxBuckets;
@@ -452,6 +452,35 @@ function xr_build_invoice(array $data, string $outFile): array {
                 '<ram:CategoryCode>' . ($totalTax > 0 ? 'S' : 'Z') . '</ram:CategoryCode>' .
                 ($totalTax > 0 ? '<ram:RateApplicablePercent>19.00</ram:RateApplicablePercent>' : '') .
             '</ram:ApplicableTradeTax>';
+    }
+
+    // Dokument-Rabatt (BG-20). EN16931 verlangt bei einem Rabatt je Steuersatz
+    // einen SpecifiedTradeAllowanceCharge (ChargeIndicator=false) sowie die
+    // Gesamtsumme als AllowanceTotalAmount (BT-107) im Summenblock. Ohne das
+    // schlägt BR-CO-13 (BT-109 = BT-106 − BT-107 + BT-108) fehl. Der Rabattanteil
+    // je Steuersatz ergibt sich aus der Differenz Original- minus reduzierter
+    // Basis; die Summe der Anteile ist per Konstruktion exakt $allow.
+    $allowanceChargeXml = '';
+    $allowanceTotalXml  = '';
+    if ($allow > 0.0) {
+        $allowSum = 0.0;
+        foreach ($taxBuckets as $r => $orig) {
+            $cut = round(((float)$orig) - (float)($taxBases[$r] ?? 0.0), 2);
+            if ($cut <= 0.0) continue;
+            $allowSum += $cut;
+            $allowanceChargeXml .=
+                '<ram:SpecifiedTradeAllowanceCharge>' .
+                    '<ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator>' .
+                    '<ram:ActualAmount>' . $nf($cut) . '</ram:ActualAmount>' .
+                    '<ram:Reason>Rabatt</ram:Reason>' .
+                    '<ram:CategoryTradeTax>' .
+                        '<ram:TypeCode>VAT</ram:TypeCode>' .
+                        '<ram:CategoryCode>' . (((float)$r) > 0 ? 'S' : 'Z') . '</ram:CategoryCode>' .
+                        (((float)$r) > 0 ? '<ram:RateApplicablePercent>' . $nf($r) . '</ram:RateApplicablePercent>' : '') .
+                    '</ram:CategoryTradeTax>' .
+                '</ram:SpecifiedTradeAllowanceCharge>';
+        }
+        $allowanceTotalXml = '<ram:AllowanceTotalAmount>' . $nf(round($allowSum, 2)) . '</ram:AllowanceTotalAmount>';
     }
 
     // Absender
@@ -546,16 +575,20 @@ function xr_build_invoice(array $data, string $outFile): array {
                     $bicXml .
                 '</ram:SpecifiedTradeSettlementPaymentMeans>' .
                 $taxXml .
+                $allowanceChargeXml .
                 $termsXml .
-                ($prevInvId !== '' ? '<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>' . $xe($prevInvId) . '</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>' : '') .
                 '<ram:SpecifiedTradeSettlementHeaderMonetarySummation>' .
                     '<ram:LineTotalAmount>' . $nf($net) . '</ram:LineTotalAmount>' .
+                    $allowanceTotalXml .
                     '<ram:TaxBasisTotalAmount>' . $nf($taxExclusive) . '</ram:TaxBasisTotalAmount>' .
                     '<ram:TaxTotalAmount currencyID="EUR">' . $nf($totalTax) . '</ram:TaxTotalAmount>' .
                     '<ram:GrandTotalAmount>' . $nf($taxInclusive) . '</ram:GrandTotalAmount>' .
                     '<ram:TotalPrepaidAmount>' . $nf($prepaid) . '</ram:TotalPrepaidAmount>' .
                     '<ram:DuePayableAmount>' . $nf($payable) . '</ram:DuePayableAmount>' .
                 '</ram:SpecifiedTradeSettlementHeaderMonetarySummation>' .
+                // BT-25/BT-26: Referenz auf die Vorgängerrechnung (Storno/Korrektur)
+                // gehört laut CII-Schema NACH die Summation, nicht davor.
+                ($prevInvId !== '' ? '<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>' . $xe($prevInvId) . '</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>' : '') .
             '</ram:ApplicableHeaderTradeSettlement>' .
         '</rsm:SupplyChainTradeTransaction>' .
     '</rsm:CrossIndustryInvoice>';
