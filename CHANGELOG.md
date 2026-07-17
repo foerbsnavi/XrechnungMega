@@ -2,6 +2,19 @@
 
 Alle Versionen von XrechnungMega.
 
+## 1.0.11 (17.07.2026)
+
+- Behoben (wichtig): Wer im Rechnungseditor eine Position löschte und danach eine neue hinzufügte, konnte beim Speichern unbemerkt eine bestehende Position überschreiben. Dieser Datenverlust ist beseitigt — neue Positionen erhalten jetzt immer eine eindeutige Nummer.
+- Behoben (wichtig): Beim Ändern einer Rechnungsnummer (im Editor wie über die REST-API) wurde die alte Rechnung gelöscht, bevor die neue vollständig geschrieben war — schlug dabei etwas fehl (z. B. eine ungültige IBAN), war die Rechnung verloren. Jetzt wird die alte Datei erst nach erfolgreichem Speichern entfernt; der Bezahlstatus wandert dabei mit.
+- Behoben (wichtig): Das Hybrid-PDF (Beleg mit eingebettetem XML) brach bei Rechnungen im älteren UBL-Format mit einem Serverfehler ab. Es wird jetzt wieder korrekt erzeugt.
+- Behoben: Eine per API gesetzte Leitweg-ID (Behördenrechnungen) und der Verweis auf eine Vorgängerrechnung gingen beim Bearbeiten im Editor verloren. Beide Angaben bleiben jetzt beim Speichern erhalten; eine korrigierte Rechnung (Typ 384) verlangt den Vorgänger-Verweis nun ausdrücklich statt stillschweigend ungültiges XML zu erzeugen.
+- Behoben: Beim Speichern über den Editor gingen Rabatt, Vorauszahlung und die gewählte Zahlungsart im erzeugten XML verloren (die REST-API war nicht betroffen). Beide Erzeugungswege liefern jetzt gleichwertige, normkonforme Ergebnisse.
+- Behoben: In der Rechnungsübersicht funktionierten der Filter und die Sortierung nach dem Bezahlstatus nicht. Beides greift jetzt.
+- Behoben: Beträge im deutschen Format mit Tausenderpunkt (z. B. „1.234,56“) wurden über die REST-API als 0 interpretiert. Mengen mit mehr als zwei Nachkommastellen (z. B. 0,125) erscheinen im XML jetzt exakt statt gerundet.
+- Verbessert: Die PDF-Erzeugung ist deutlich schneller — die verwendete Schrift liegt der App jetzt lokal bei, statt bei jedem Beleg aus dem Internet geladen zu werden. Das macht Selbst-Hosting-Installationen zugleich unabhängiger.
+- Verbessert: Die App ist jetzt mit der Tastatur bedienbar — Rechnungen lassen sich ohne Maus öffnen, Dialoge mit Escape schließen, und alle Eingabefelder sind für Screenreader benannt. Am Erscheinungsbild ändert sich nichts.
+- Technische Härtung: robusteres Speichern der Statusliste bei parallelen Zugriffen, strengere Datums- und Zeichenprüfung, XML-Import lehnt Dateien mit abweichender innerer Rechnungsnummer ab.
+
 ## 1.0.10 (03.07.2026)
 
 - Behoben: Rechnungen mit einem Rabatt (Nachlass) werden jetzt vollständig normkonform nach XRechnung (EN 16931) erzeugt — der Rabatt wird als eigener Abschlag ausgewiesen und die ausgewiesene Steuerbasis stimmt mit dem Rechnungsbetrag überein. Zuvor konnten rabattierte Rechnungen bei der amtlichen Prüfung (KoSIT) abgewiesen werden. Betrifft die Rechnungserstellung über die REST-API im Selbst-Hosting.

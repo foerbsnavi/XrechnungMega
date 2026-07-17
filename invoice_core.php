@@ -9,7 +9,10 @@ declare(strict_types=1);
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────
 
 function xr_clean_currency(mixed $v): string {
-    $v = str_replace(['€', ' '], '', trim((string)$v));
+    $v = str_replace(['€', ' ', "\xC2\xA0"], '', trim((string)$v));
+    // Deutsches Format "1.234,56": Punkt = Tausendertrenner, Komma = Dezimaltrenner.
+    // Ohne diese Unterscheidung wurde "1.234,56" zu "1.234.56" und still zu 0.
+    if (strpos($v, ',') !== false && strpos($v, '.') !== false) $v = str_replace('.', '', $v);
     $v = str_replace(',', '.', $v);
     $v = preg_replace('/[^0-9.\-]/', '', $v);
     return is_numeric($v) ? $v : '0';
@@ -18,11 +21,14 @@ function xr_clean_currency(mixed $v): string {
 function xr_iso_date(mixed $d): string {
     $d = trim((string)$d);
     if ($d === '') return '';
-    // Bereits ISO?
-    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) return $d;
-    // Deutsches Format
-    $o = DateTime::createFromFormat('d.m.Y', $d);
-    if ($o) return $o->format('Y-m-d');
+    // checkdate statt DateTime-Überlauf: aus "31.02." darf nicht still der 03.03. werden
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $d, $m)) {
+        return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? $d : '';
+    }
+    if (preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/', $d, $m)) {
+        return checkdate((int)$m[2], (int)$m[1], (int)$m[3])
+            ? sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]) : '';
+    }
     return '';
 }
 
@@ -90,16 +96,30 @@ function xr_load_status(): array {
     return is_array($a) ? $a : [];
 }
 
-function xr_save_status(array $map): bool {
+// Read-Modify-Write unter EINEM exklusiven Lock auf der Zieldatei — Lost-Update-sicher.
+// Für neue Aufrufer die bevorzugte Schnittstelle.
+function xr_status_rmw(callable $fn): bool {
     if (!defined('STATUS_FILE')) return false;
-    $tmp = STATUS_FILE . '.tmp';
-    $h = @fopen($tmp, 'w');
+    $dir = dirname(STATUS_FILE);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $h = @fopen(STATUS_FILE, 'c+');
     if (!$h) return false;
-    @flock($h, LOCK_EX);
-    fwrite($h, json_encode($map, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-    @flock($h, LOCK_UN);
-    @fclose($h);
-    return rename($tmp, STATUS_FILE);
+    if (!@flock($h, LOCK_EX)) { fclose($h); return false; }
+    $map = json_decode((string)stream_get_contents($h), true);
+    if (!is_array($map)) $map = [];
+    $map = $fn($map);
+    ftruncate($h, 0); rewind($h);
+    fwrite($h, json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    fflush($h);
+    @flock($h, LOCK_UN); fclose($h);
+    return true;
+}
+
+// Kompatibilitäts-Wrapper (volles Überschreiben). Die frühere Implementierung
+// teilte sich mit allen Schreibern dieselbe .tmp-Datei und trunkierte VOR dem
+// Lock — halbe Schreibstände konnten per rename gewinnen.
+function xr_save_status(array $map): bool {
+    return xr_status_rmw(static fn(array $old): array => $map);
 }
 
 // ── Rechnungs-Metadaten (für Liste) ─────────────────────────────────────────
@@ -312,7 +332,12 @@ function xr_parse_invoice(string $path): ?array {
  * Rückgabe: ['ok'=>true,'file'=>basename,'id'=>rn] oder ['ok'=>false,'error'=>msg]
  */
 function xr_build_invoice(array $data, string $outFile): array {
-    $xe = 'htmlspecialchars';
+    // Escaper entfernt zusätzlich XML-1.0-unzulässige Steuerzeichen (z. B. \x0B aus
+    // Copy-Paste) — sonst entsteht eine Datei, die die App selbst nicht mehr laden kann.
+    $xe = static function (mixed $v): string {
+        $v = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', (string)$v);
+        return htmlspecialchars($v);
+    };
 
     $rn = trim(preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)($data['rechnungsnummer'] ?? '')), '_-');
     if ($rn === '') return ['ok' => false, 'error' => 'Rechnungsnummer fehlt oder ungültig'];
@@ -368,6 +393,13 @@ function xr_build_invoice(array $data, string $outFile): array {
     $linesXml   = '';
     $idx        = 0;
     $nf         = fn($v) => xr_s2((float)$v);
+    // Menge/Einzelpreis (BT-129/BT-146) dürfen mehr als 2 Nachkommastellen tragen —
+    // hartes Runden machte aus menge 0.125 im XML "0.13" bei Zeilensumme 12.50.
+    $nq         = static function (mixed $v): string {
+        $f = (float)$v;
+        if (abs($f - round($f, 2)) < 1e-9) return xr_s2($f);
+        return rtrim(number_format($f, 4, '.', ''), '0');
+    };
 
     foreach ($pos as $p) {
         if (!is_array($p)) continue;
@@ -386,8 +418,8 @@ function xr_build_invoice(array $data, string $outFile): array {
             '<ram:IncludedSupplyChainTradeLineItem>' .
                 '<ram:AssociatedDocumentLineDocument><ram:LineID>' . $idx . '</ram:LineID></ram:AssociatedDocumentLineDocument>' .
                 '<ram:SpecifiedTradeProduct><ram:Name>' . $xe($desc) . '</ram:Name></ram:SpecifiedTradeProduct>' .
-                '<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>' . $nf($price) . '</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>' .
-                '<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="' . $xe($unit) . '">' . $nf($qty) . '</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>' .
+                '<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>' . $nq($price) . '</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>' .
+                '<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="' . $xe($unit) . '">' . $nq($qty) . '</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>' .
                 '<ram:SpecifiedLineTradeSettlement>' .
                     '<ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>' . ($rate > 0 ? 'S' : 'Z') . '</ram:CategoryCode>' . ($rate > 0 ? '<ram:RateApplicablePercent>' . $nf($rate) . '</ram:RateApplicablePercent>' : '') . '</ram:ApplicableTradeTax>' .
                     '<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>' . $nf($lineNet) . '</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>' .
@@ -593,7 +625,11 @@ function xr_build_invoice(array $data, string $outFile): array {
         '</rsm:SupplyChainTradeTransaction>' .
     '</rsm:CrossIndustryInvoice>';
 
-    if (file_put_contents($outFile, $cii) === false) {
+    // Byte-genau prüfen: ein Teil-Write (voller Datenträger) wäre eine kaputte,
+    // unlesbare XML — die darf nicht als Erfolg durchgehen und nicht liegen bleiben.
+    $written = file_put_contents($outFile, $cii, LOCK_EX);
+    if ($written === false || $written !== strlen($cii)) {
+        if ($written !== false) @unlink($outFile);
         return ['ok' => false, 'error' => 'XML-Datei konnte nicht gespeichert werden'];
     }
 

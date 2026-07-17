@@ -517,7 +517,10 @@ function facturx_pdf($xmlPath, $pdfPath=null, $displayName=null){
     return str_replace(['\\','(',')'],['\\\\','\(','\)'],$b);
   };
 
+  // Lokal gebündelte Schrift zuerst (gemessen ~0,1 s HTTP-Aufpreis PRO PDF-Request,
+  // Worst Case 10 s Timeout + stiller Helvetica-Umfall); HTTP nur noch als Fallback.
   $pdfFontN_bytes=pdf_font_bytes([
+    __DIR__.'/Brose.ttf',
     'https://daten.fabianbrose.de/typo/font.php?f=Brose.ttf'
   ]);
 

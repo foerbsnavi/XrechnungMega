@@ -344,9 +344,19 @@ function facturx_is_cii($xml){
   return (bool)preg_match('~<\s*(?:\w+:)?CrossIndustryInvoice\b~i',$xml);
 }
 
-function ubl_to_cii_pferd($xmlPath){
+// Liefert die CII-Repräsentation einer UBL-Rechnung als STRING.
+// Achtung: ubl_to_cii.php deklariert selbst ein ubl_to_cii_pferd($ublPath,$ciiPath)
+// (Datei-zu-Datei, Rückgabe bool) — der frühere gleichnamige Wrapper hier führte
+// zu "Cannot redeclare" (HTTP 500 bei jeder UBL-Rechnung) und rief zudem
+// ubl_to_cii() mit nur einem Argument auf.
+function ubl_to_cii_pferd_xml($ublPath){
   require_once __DIR__.'/ubl_to_cii.php';
-  return ubl_to_cii($xmlPath);
+  $tmp=tempnam(sys_get_temp_dir(),'cii_');
+  if($tmp===false) return null;
+  $ok=ubl_to_cii_pferd($ublPath,$tmp);
+  $xml=$ok?@file_get_contents($tmp):null;
+  @unlink($tmp);
+  return (is_string($xml) && $xml!=='') ? $xml : null;
 }
 
 function cii_xml_sanitize_for_embed_pferd($xml){
@@ -394,7 +404,7 @@ function facturx_embed_xml_bytes($xmlOrPath){
       $tmp=tempnam(sys_get_temp_dir(),'ubl_');
       file_put_contents($tmp,$xml);
     }
-    $cii=ubl_to_cii_pferd($tmp);
+    $cii=ubl_to_cii_pferd_xml($tmp);
     if($tmp!==$xmlOrPath && is_file($tmp)) @unlink($tmp);
     if(!is_string($cii) || $cii==='') return null;
     $xml=$cii;
@@ -624,7 +634,8 @@ function facturx_pdf_en16931($xmlPath,$pdfPath=null){
     return str_replace(['\\','(',')'],['\\\\','\(','\)'],$b);
   };
 
-  $pdfFontN_bytes=pdf_font_bytes(['https://daten.fabianbrose.de/typo/font.php?f=Brose.ttf']);
+  // Lokal gebündelte Schrift zuerst (siehe pdf_generator_x.php); HTTP nur Fallback.
+  $pdfFontN_bytes=pdf_font_bytes([__DIR__.'/Brose.ttf','https://daten.fabianbrose.de/typo/font.php?f=Brose.ttf']);
   $pdfFontN=$pdfFontN_bytes ? pdf_ttf_winansi_metrics($pdfFontN_bytes) : null;
   $pdfFontB=$pdfFontN;
 

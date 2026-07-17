@@ -7,10 +7,12 @@ Mitgelieferte / eingebundene Bestandteile:
 
 1) Schrift „Brose"
    Die App-Oberfläche und die PDF-Belege verwenden standardmäßig die Schrift
-   „Brose", die zur Laufzeit von daten.fabianbrose.de geladen wird.
-   Dies ist eine persönliche Schrift des Autors.
+   „Brose". Für die PDF-Erzeugung liegt sie als Brose.ttf lokal bei; fehlt die
+   Datei, wird sie zur Laufzeit von daten.fabianbrose.de geladen (Fallback:
+   Helvetica). Dies ist eine persönliche Schrift des Autors — sie steht NICHT
+   unter der MIT-Lizenz dieser App und darf nicht separat weiterverwendet werden.
    HINWEIS für Selbst-Hoster: Für eine vollständig unabhängige Installation
-   sollte diese durch eine frei lizenzierte Schrift ersetzt werden
+   kann sie durch eine frei lizenzierte Schrift ersetzt werden
    (siehe style.css sowie pdf_generator_x.php / pdf_generator_pferd.php).
 
 2) ICC-Farbprofil sRGB2014.icc

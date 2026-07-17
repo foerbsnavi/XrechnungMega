@@ -19,26 +19,21 @@ if (!preg_match('/^[\w.-]+\.xml$/i', $file)) {
   http_response_code(400); echo json_encode(['ok'=>false,'msg'=>'Ungültiger Dateiname']); exit;
 }
 
-function load_json(string $path): array {
-  if (!is_file($path)) return [];
-  $h=@fopen($path,'r'); if(!$h) return [];
-  @flock($h,LOCK_SH);
-  $c=stream_get_contents($h);
-  @flock($h,LOCK_UN); @fclose($h);
-  $a=json_decode((string)$c,true);
-  return is_array($a)?$a:[];
-}
-function write_json_atomic(string $file, array $data): bool {
+// Read-Modify-Write unter EINEM exklusiven Lock auf der Zieldatei — verhindert
+// Lost Updates zwischen parallelen Schreibern und die frühere geteilte .tmp-Datei.
+function status_rmw(string $file, callable $fn): bool {
   $dir = dirname($file);
   if (!is_dir($dir)) @mkdir($dir,0755,true);
-  $tmp = $file.'.tmp';
-  $h=@fopen($tmp,'c+'); if(!$h) return false;
-  @flock($h,LOCK_EX);
-  ftruncate($h,0);
-  fwrite($h, json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+  $h=@fopen($file,'c+'); if(!$h) return false;
+  if(!@flock($h,LOCK_EX)){ fclose($h); return false; }
+  $map=json_decode((string)stream_get_contents($h),true);
+  if(!is_array($map)) $map=[];
+  $map=$fn($map);
+  ftruncate($h,0); rewind($h);
+  fwrite($h, json_encode($map, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
   fflush($h);
   @flock($h,LOCK_UN); fclose($h);
-  return @rename($tmp,$file);
+  return true;
 }
 
 $base = realpath(OUTBOX_DIR);
@@ -56,12 +51,9 @@ $deleted = ['outbox_xml'=>false,'outbox_pdf'=>false,'status_removed'=>false];
 $deleted['outbox_xml'] = @unlink($pathXml);
 if ($pathPdf && is_file($pathPdf) && strpos($pathPdf, $base) === 0) $deleted['outbox_pdf'] = @unlink($pathPdf);
 
-$map = load_json(STATUS_FILE);
-if ($map) {
+$deleted['status_removed'] = status_rmw(STATUS_FILE, function(array $map) use ($inv) {
   unset($map[$inv], $map[$inv.'.xml']);
-  $deleted['status_removed'] = write_json_atomic(STATUS_FILE, $map);
-} else {
-  $deleted['status_removed'] = true;
-}
+  return $map;
+});
 
 echo json_encode(['ok'=>$deleted['outbox_xml'], 'invoice'=>$inv, 'deleted'=>$deleted]);

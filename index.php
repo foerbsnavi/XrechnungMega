@@ -125,14 +125,17 @@ function print_invoice_rows(array $rechnungen, array $STATUS_OPTIONS, array $sta
     $sumEsc     = htmlspecialchars($sumDisp, ENT_QUOTES, 'UTF-8');
     $keyEsc     = htmlspecialchars($key, ENT_QUOTES, 'UTF-8');
 
-    echo "<tr data-file=\"{$fnEsc}\" onclick=\"loadXML('{$fnEsc}')\" style=\"cursor:pointer\">";
+    // tabindex: Die Zeile ist der einzige Weg in eine Rechnung; ohne sie war das
+    // Oeffnen nur mit der Maus moeglich. Kein role="button" — das wuerde die
+    // Tabellensemantik zerstoeren; Enter/Space haengen als Tastatur-Handler am tbody.
+    echo "<tr data-file=\"{$fnEsc}\" tabindex=\"0\" onclick=\"loadXML('{$fnEsc}')\" style=\"cursor:pointer\">";
     echo "<td>{$displayEsc}</td>";
     echo "<td>{$dateEsc}</td>";
     echo "<td>{$typEsc}</td>";
     echo "<td>{$empEsc}</td>";
     echo "<td>{$sumEsc}</td>";
     echo "<td>";
-    echo "<select class=\"statusSel\" onchange=\"updateStatus('{$keyEsc}', this.value)\" onclick=\"event.stopPropagation()\">";
+    echo "<select class=\"statusSel\" aria-label=\"Status der Rechnung {$displayEsc}\" onchange=\"updateStatus('{$keyEsc}', this.value)\" onclick=\"event.stopPropagation()\">";
     foreach ($STATUS_OPTIONS as $opt) {
       $optEsc = htmlspecialchars($opt, ENT_QUOTES, 'UTF-8');
       $sel = ($opt === $statusVal) ? ' selected' : '';
@@ -187,18 +190,18 @@ if (isset($_GET['list'])) {
     <?php endif; ?>
   </div>
 </div>
-<input id="invoice-filter" class="noprint" type="text" placeholder="Filtern… (alle Spalten)" autocomplete="off" style="width:200px;max-width:100%;box-sizing:border-box;margin:10px 0 12px;border:1px solid #ccc;padding:8px">
+<input id="invoice-filter" class="noprint" type="text" placeholder="Filtern… (alle Spalten)" aria-label="Rechnungen filtern (alle Spalten)" autocomplete="off" style="width:200px;max-width:100%;box-sizing:border-box;margin:10px 0 12px;border:1px solid #ccc;padding:8px">
 
 <div class="table-scroll noprint" role="region" aria-label="Rechnungsübersicht, horizontal scrollbar" tabindex="0">
 <table id="invoice-table" class="noprint">
   <thead>
     <tr>
-      <th data-col="0" class="th-sort">Rechnungsnummer</th>
-      <th data-col="1" class="th-sort">Datum</th>
-      <th data-col="2" class="th-sort">Typ</th>
-      <th data-col="3" class="th-sort">Empfänger</th>
-      <th data-col="4" class="th-sort">Betrag</th>
-      <th data-col="5" class="th-sort">Status</th>
+      <th data-col="0" class="th-sort" tabindex="0">Rechnungsnummer</th>
+      <th data-col="1" class="th-sort" tabindex="0">Datum</th>
+      <th data-col="2" class="th-sort" tabindex="0">Typ</th>
+      <th data-col="3" class="th-sort" tabindex="0">Empfänger</th>
+      <th data-col="4" class="th-sort" tabindex="0">Betrag</th>
+      <th data-col="5" class="th-sort" tabindex="0">Status</th>
     </tr>
   </thead>
 <tbody id="invoice-list">
@@ -209,15 +212,15 @@ if (isset($_GET['list'])) {
 </div>
 
 <div class="toolbar noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-  <button type="button" class="btn-add" onclick="loadTemplate()">+</button>
+  <button type="button" class="btn-add" onclick="loadTemplate()" aria-label="Neue Rechnung anlegen" title="Neue Rechnung anlegen">+</button>
   <button type="button" class="btn-add" onclick="document.getElementById('xml-import-input').click()" title="XrechnungMega-XML-Dateien importieren" aria-label="XML importieren">⬆ XML importieren</button>
   <input id="xml-import-input" type="file" accept=".xml,application/xml,text/xml" multiple style="display:none" onchange="importXML(this)" aria-label="XML-Rechnungen zum Importieren auswählen">
 </div>
 
 
 <div id="popup-overlay" class="popup-overlay">
-  <div class="popup">
-    <button class="close" onclick="closePopup()">x</button>
+  <div class="popup" role="dialog" aria-modal="true" aria-label="Rechnung bearbeiten">
+    <button class="close" onclick="closePopup()" aria-label="Rechnung schließen">x</button>
     <div id="popup-content"></div>
   </div>
 </div>
@@ -231,8 +234,8 @@ if (isset($_GET['list'])) {
   </div>
 </div>
 <div id="pdfpick-overlay" class="popup-overlay">
-  <div class="popup modal-popup">
-    <div class="modal-message">PDF auswählen</div>
+  <div class="popup modal-popup" role="dialog" aria-modal="true" aria-labelledby="pdfpick-titel">
+    <div class="modal-message" id="pdfpick-titel">PDF auswählen</div>
     <div class="modal-actions">
       <button type="button" id="pdfpick-fx">PDF ZUGFeRD</button>
       <button type="button" id="pdfpick-xr">PDF XRechnung</button>
@@ -279,14 +282,23 @@ function parseDateToTS(s){
   return Number.isFinite(t) ? t : 0;
 }
 
+// Zellentext fuer Filter und Sortierung. Sonderfall Status-Spalte: dort steht ein
+// <select> mit ALLEN Optionen — dessen textContent waere fuer jede Zeile identisch
+// ("OffenErinnerung gesendetBezahlt…"). Deshalb der gewaehlte Wert statt des Textes:
+// sonst sortiert die Status-Spalte nicht und der Filter findet bei jedem
+// Status-Begriff jede Zeile. select.value ist auch nach einer Aenderung aktuell.
 function getCellText(row, idx){
   const td = row && row.children ? row.children[idx] : null;
-  return td ? String(td.textContent ?? '').trim() : '';
+  if(!td) return '';
+  const sel = td.querySelector ? td.querySelector('select.statusSel') : null;
+  if(sel) return String(sel.value ?? '').trim();
+  return String(td.textContent ?? '').trim();
 }
 
 function rowMatchesFilter(row, q){
   if(!q) return true;
-  const hay = String(row.textContent ?? '').toLowerCase();
+  const cells = row.children ? Array.from(row.children) : [];
+  const hay = cells.map((_, i)=>getCellText(row, i)).join(' ').toLowerCase();
   return hay.includes(q);
 }
 
@@ -344,7 +356,16 @@ function updateSortIndicators(){
     th.classList.add('pointer');
     th.textContent = th.textContent.replace(/\s*[▲▼]\s*$/,'');
     if(c === INVOICE_TABLE_STATE.sortIdx){
-      th.textContent += INVOICE_TABLE_STATE.sortDir === 1 ? ' ▲' : ' ▼';
+      // Der Pfeil ist reine Optik und gehoert in einem aria-hidden-span, sonst
+      // wandert er in den Namen der Spalte ("Datum ▲") und wird zusaetzlich zu
+      // aria-sort vorgelesen. Optisch identisch zu vorher.
+      const pfeil = document.createElement('span');
+      pfeil.setAttribute('aria-hidden','true');
+      pfeil.textContent = INVOICE_TABLE_STATE.sortDir === 1 ? ' ▲' : ' ▼';
+      th.appendChild(pfeil);
+      th.setAttribute('aria-sort', INVOICE_TABLE_STATE.sortDir === 1 ? 'ascending' : 'descending');
+    }else{
+      th.removeAttribute('aria-sort');
     }
   }
 }
@@ -367,12 +388,19 @@ function initInvoiceTableUX(){
 
   const ths = Array.from(table.querySelectorAll('thead th.th-sort'));
   for(const th of ths){
-    th.onclick = ()=>{
+    const sortiere = ()=>{
       const idx = Number(th.getAttribute('data-col'));
       if(Number.isNaN(idx)) return;
       if(INVOICE_TABLE_STATE.sortIdx === idx) INVOICE_TABLE_STATE.sortDir *= -1;
       else{ INVOICE_TABLE_STATE.sortIdx = idx; INVOICE_TABLE_STATE.sortDir = 1; }
       applyInvoiceSort();
+    };
+    th.onclick = sortiere;
+    // Sortieren war bisher nur per Maus moeglich
+    th.onkeydown = (e)=>{
+      if(e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      sortiere();
     };
   }
 
@@ -391,6 +419,7 @@ async function refreshInvoiceList(fileToFocus){
     const html = await r.text();
     tbody.innerHTML = html;
     initStatusColorHooks();
+    initRowKeyboard();
     applyStatusColors(tbody);
     initInvoiceTableUX();
 
@@ -445,9 +474,18 @@ const UI_MODAL = (()=>{
     });
   }
 
+  // Abbruch von aussen (ESC) — dieselbe Wirkung wie ein Klick neben den Dialog.
+  // Liefert true, wenn wirklich ein offener Dialog geschlossen wurde.
+  function cancel(){
+    if(overlay.style.display !== 'flex') return false;
+    if(resolver){ const r=resolver; hide(); r(false); } else hide();
+    return true;
+  }
+
   return {
     alert:  (message, okText='OK') => show({message, yesText: okText, showNo:false}),
-    confirm:(message, yesText='Ja', noText='Nein') => show({message, yesText, noText, showNo:true})
+    confirm:(message, yesText='Ja', noText='Nein') => show({message, yesText, noText, showNo:true}),
+    cancel
   };
 })();
 const PDF_PICKER = (()=>{
@@ -472,10 +510,18 @@ const PDF_PICKER = (()=>{
 
   function choose(){
     overlay.style.display='flex';
+    fxBtn.focus();
     return new Promise(resolve=>{ resolver=resolve; });
   }
 
-  return { choose };
+  // Abbruch von aussen (ESC) — wie ein Klick neben den Dialog.
+  function cancel(){
+    if(overlay.style.display !== 'flex') return false;
+    if(resolver){ const r=resolver; hide(); r(null); } else hide();
+    return true;
+  }
+
+  return { choose, cancel };
 })();
 
 function recalcRow(tr){
@@ -490,6 +536,29 @@ function recalcRow(tr){
 
   span.textContent = `${euroFmt(line)} €`;
   return line;
+}
+
+// Positions-Ansagen an die SICHTBARE Reihenfolge angleichen. Noetig, weil die
+// aria-labels beim Rendern aus dem Feld-Index kommen — und der darf Luecken haben
+// (siehe read.php, "+"-Button). Ohne das sagen nach einem Loeschen zwei Zeilen
+// dieselbe Nummer an, oder die erste Zeile meldet sich als "Position 2".
+// Rein sprachlich: aendert kein Pixel und keinen Feldnamen.
+function renumberPositionen(root){
+  const tbody = root ? root.querySelector('.invoice-table tbody') : null;
+  if(!tbody) return;
+  Array.from(tbody.querySelectorAll('tr')).forEach((tr, idx)=>{
+    const nr = idx + 1;
+    const benenne = (sel, was)=>{
+      const el = tr.querySelector(sel);
+      if(el) el.setAttribute('aria-label', `Position ${nr}: ${was}`);
+    };
+    benenne('input[name*="[beschreibung]"]', 'Beschreibung');
+    benenne('select[name*="[einheit]"]', 'Einheit');
+    benenne('input[name*="[menge]"]', 'Menge');
+    benenne('input[name*="[einzelpreis]"]', 'Einzelpreis');
+    const loeschen = tr.querySelector('p[role="button"]');
+    if(loeschen) loeschen.setAttribute('aria-label', `Position ${nr} entfernen`);
+  });
 }
 
 function recalcInvoice(root){
@@ -605,11 +674,18 @@ async function saveInvoiceAsync(root, opts){
     }
 
     const newFile = String(j.file || target);
+    // Beim Umbenennen wandert die Zeile auf einen neuen Dateinamen — der Merker
+    // fuer die Fokus-Rueckgabe muss mit, sonst sucht closePopup die alte Zeile.
+    window.POPUP_OPENER_FILE = newFile;
     updateHiddenFile(root, newFile);
     updateXmlLink(root, newFile);
     setActionButtonsEnabled(root, newFile.toLowerCase() !== 'vorlage.xml');
     setSaveMsg(root,true);
-    refreshInvoiceList(newFile);
+    // await aus demselben Grund wie in deleteInvoice: Ohne es koennte der Nutzer
+    // schliessen, WAEHREND die Liste noch laedt — closePopup wuerde die alte Zeile
+    // fokussieren, die der Austausch gleich darauf entfernt (Fokus faellt auf
+    // <body>). Die Zeile ist Teil des Speicherns, also darf sie fertig werden.
+    await refreshInvoiceList(newFile);
 
   }catch(e){
     console.error(e);
@@ -619,24 +695,34 @@ async function saveInvoiceAsync(root, opts){
   }
 }
 
+// Fokus beim Oeffnen in den Dialog setzen und beim Schliessen zurueckgeben
+// (closePopup liest POPUP_OPENER). Ohne das landet man nach dem Schliessen
+// wieder am Seitenanfang statt bei der Rechnung, die man geoeffnet hatte.
+function openInvoicePopup(el){
+  document.getElementById('popup-overlay').style.display='flex';
+  wireInvoiceForm(el);
+  recalcInvoice(el);
+  const first = el.querySelector('input:not([type=hidden]),select,textarea,button');
+  if(first) first.focus();
+}
+
 async function loadXML(filename){
+  window.POPUP_OPENER = document.activeElement;
+  window.POPUP_OPENER_FILE = filename;
   const r=await fetch(`read.php?file=${encodeURIComponent(filename)}`);
   const html=await r.text();
   const el=document.getElementById('popup-content');
   el.innerHTML=html;
-  document.getElementById('popup-overlay').style.display='flex';
-  wireInvoiceForm(el);
-  recalcInvoice(el);
+  openInvoicePopup(el);
 }
 
 async function loadTemplate(){
+  window.POPUP_OPENER = document.activeElement;
   const r=await fetch('read.php?file=vorlage.xml');
   const html=await r.text();
   const el=document.getElementById('popup-content');
   el.innerHTML=html;
-  document.getElementById('popup-overlay').style.display='flex';
-  wireInvoiceForm(el);
-  recalcInvoice(el);
+  openInvoicePopup(el);
 }
 
 async function importXML(input){
@@ -682,7 +768,70 @@ async function openInvoicePdf(){
 function closePopup(){
   document.getElementById('popup-overlay').style.display='none';
   document.getElementById('popup-content').innerHTML='';
+
+  // Fokus dorthin zurueck, wo der Editor geoeffnet wurde. Der gemerkte Knoten
+  // allein reicht NICHT: Wer bei offenem Editor speichert, loest ein
+  // refreshInvoiceList aus, das die Zeile ersetzt — der Knoten ist dann tot und
+  // der Fokus fiele auf <body>, also an den Seitenanfang. Deshalb zusaetzlich
+  // der Dateiname als stabiler Schluessel, um die NEUE Zeile wiederzufinden.
+  const back = window.POPUP_OPENER;
+  const file = window.POPUP_OPENER_FILE;
+  window.POPUP_OPENER = null;
+  window.POPUP_OPENER_FILE = null;
+
+  if(back && document.contains(back)){ back.focus(); return; }
+  if(file){
+    const esc = (window.CSS && CSS.escape) ? CSS.escape(file) : String(file).replace(/["\\]/g,'\\$&');
+    const row = document.querySelector(`#invoice-list tr[data-file="${esc}"]`);
+    if(row){ row.focus(); return; }
+  }
+  const ausweich = document.getElementById('invoice-filter');
+  if(ausweich) ausweich.focus();
 }
+
+// Der oberste offene Dialog (Reihenfolge = z-index-Stapelung, style.css:85-87)
+function obersterDialog(){
+  for(const id of ['pdfpick-overlay','modal-overlay','popup-overlay']){
+    const o = document.getElementById(id);
+    if(o && o.style.display === 'flex') return o;
+  }
+  return null;
+}
+
+function fokussierbare(dialog){
+  const sel = 'a[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),'
+            + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  return Array.from(dialog.querySelectorAll(sel)).filter(el=>el.offsetWidth || el.offsetHeight);
+}
+
+// ESC schliesst den obersten offenen Dialog. Bisher liess sich kein Overlay per
+// Tastatur verlassen — nur per Maus daneben klicken.
+document.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Escape') return;
+  if(PDF_PICKER.cancel()){ e.preventDefault(); return; }
+  if(UI_MODAL.cancel()){ e.preventDefault(); return; }
+  const popup = document.getElementById('popup-overlay');
+  if(popup && popup.style.display === 'flex'){ e.preventDefault(); closePopup(); }
+});
+
+// Tab im Dialog halten. Die Overlays verdecken den Hintergrund nur halbtransparent
+// (rgba(0,0,0,.5)) — ohne das wandert der Fokus per Tab hinter den Dialog, wo der
+// Fokusring unter der Abdunklung praktisch unsichtbar ist.
+document.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Tab') return;
+  const dialog = obersterDialog();
+  if(!dialog) return;
+  const liste = fokussierbare(dialog);
+  if(!liste.length) return;
+  const erstes = liste[0], letztes = liste[liste.length-1];
+  if(!dialog.contains(document.activeElement)){
+    e.preventDefault();
+    erstes.focus();
+    return;
+  }
+  if(e.shiftKey && document.activeElement === erstes){ e.preventDefault(); letztes.focus(); }
+  else if(!e.shiftKey && document.activeElement === letztes){ e.preventDefault(); erstes.focus(); }
+});
 
 function preparePrintView(){
   document.querySelectorAll('select.grau, select.plain-select').forEach(s=>{
@@ -711,14 +860,35 @@ document.getElementById('popup-content').addEventListener('input', (e)=>{
   recalcInvoice(document.getElementById('popup-content'));
 }, {passive:true});
 
+// Die Loesch-Schaltflaechen der Positionen sind <p role="button"> — Enter/Space
+// muessen sie ausloesen. p.click() stoesst den vorhandenen onclick UND die
+// Neuberechnung unten mit an, deshalb kein doppelter Code.
+document.getElementById('popup-content').addEventListener('keydown', (e)=>{
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const t = e.target;
+  if(!(t instanceof HTMLElement)) return;
+  const p = t.closest('p[role="button"]');
+  if(!p) return;
+  e.preventDefault();
+  p.click();
+});
+
 document.getElementById('popup-content').addEventListener('click', (e)=>{
   const t = e.target;
   if(!(t instanceof HTMLElement)) return;
   if(t.closest('button') && t.closest('button').getAttribute('type') === 'button') {
-    queueMicrotask(()=>recalcInvoice(document.getElementById('popup-content')));
+    queueMicrotask(()=>{
+      const el = document.getElementById('popup-content');
+      recalcInvoice(el);
+      renumberPositionen(el);
+    });
   }
   if(t.matches('p') && t.getAttribute('onclick') && t.getAttribute('onclick').includes('remove')) {
-    queueMicrotask(()=>recalcInvoice(document.getElementById('popup-content')));
+    queueMicrotask(()=>{
+      const el = document.getElementById('popup-content');
+      recalcInvoice(el);
+      renumberPositionen(el);
+    });
   }
 });
 
@@ -742,8 +912,13 @@ async function deleteInvoice(){
     if(!r.ok || !j || j.ok!==true) throw new Error((j&&j.msg)||'Fehler beim Löschen.');
 
     await UI_MODAL.alert('Gelöscht.');
+    // Erst die Liste neu laden, DANN schliessen — und das await ist der Kern:
+    // Schliesst man vorher, steht die geloeschte Zeile noch im DOM, closePopup
+    // haelt sie fuer gueltig und fokussiert sie, und der gleich folgende
+    // Listen-Austausch reisst den Fokus auf <body> (= Seitenanfang). So ist die
+    // Zeile beim Schliessen schon weg und der Ausweich-Fokus greift sauber.
+    await refreshInvoiceList();
     closePopup();
-    refreshInvoiceList();
   }catch(e){
     console.error(e);
     UI_MODAL.alert(e && e.message ? e.message : 'Fehler beim Löschen.');
@@ -798,6 +973,26 @@ function applyStatusColors(root){
   });
 }
 
+// Zeilen per Tastatur oeffnen. Die Zeile traegt nur onclick; ohne das hier war die
+// Kernfunktion (eine Rechnung oeffnen) ausschliesslich mit der Maus erreichbar.
+function initRowKeyboard(){
+  const tbody = document.getElementById('invoice-list');
+  if(!tbody || tbody.dataset.rowKeyboardWired==='1') return;
+  tbody.dataset.rowKeyboardWired='1';
+
+  tbody.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const t = e.target;
+    if(!(t instanceof HTMLElement)) return;
+    // Status-Auswahl u. a. behalten ihre eigene Tastaturbedienung
+    if(t.closest('select,input,button,a')) return;
+    const tr = t.closest('tr[data-file]');
+    if(!tr) return;
+    e.preventDefault();
+    loadXML(tr.getAttribute('data-file'));
+  });
+}
+
 function initStatusColorHooks(){
   const tbody = document.getElementById('invoice-list');
   if(!tbody || tbody.dataset.statusColorsWired==='1') return;
@@ -814,6 +1009,7 @@ function initStatusColorHooks(){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   initStatusColorHooks();
+  initRowKeyboard();
   applyStatusColors(document);
   initInvoiceTableUX();
 });

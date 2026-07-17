@@ -63,7 +63,10 @@ $sum  = (array)($_POST['zusammenfassung'] ?? []);
 if (empty($det['rechnungsnummer'])) fail('Rechnungsnummer fehlt',400);
 
 function cleanCurrency($v){
-  $v=str_replace(['€',' '],'',trim((string)$v));
+  $v=str_replace(['€',' ',"\xC2\xA0"],'',trim((string)$v));
+  // Deutsches Format "1.234,56": Punkt = Tausendertrenner, Komma = Dezimaltrenner.
+  // Ohne diese Unterscheidung wurde "1.234,56" zu "1.234.56" und still zu 0.
+  if(strpos($v,',')!==false && strpos($v,'.')!==false) $v=str_replace('.','',$v);
   $v=str_replace(',','.',$v);
   $v=preg_replace('/[^0-9\.\-]/','',$v);
   return is_numeric($v)?$v:'0';
@@ -71,12 +74,31 @@ function cleanCurrency($v){
 function isoDate($d){
   $d=trim((string)$d);
   if($d==='') return '';
-  $o=DateTime::createFromFormat('d.m.Y',$d);
-  if($o) return $o->format('Y-m-d');
-  if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$d)) return $d;
+  // checkdate statt DateTime-Überlauf: aus "31.02.2026" darf nicht still der 03.03. werden
+  if(preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/',$d,$m)){
+    if(checkdate((int)$m[2],(int)$m[1],(int)$m[3])) return sprintf('%04d-%02d-%02d',$m[3],$m[2],$m[1]);
+    return '';
+  }
+  if(preg_match('/^(\d{4})-(\d{2})-(\d{2})$/',$d,$m)){
+    if(checkdate((int)$m[2],(int)$m[3],(int)$m[1])) return $d;
+    return '';
+  }
   return '';
 }
 function s2($n){ return number_format((float)$n,2,'.',''); }
+// Read-Modify-Write an status.json unter EINEM exklusiven Lock auf der Zieldatei —
+// verhindert Lost Updates zwischen parallelen Schreibern (save/status_update/delete/import).
+function statusRmw(string $file, callable $fn): bool {
+  $h=@fopen($file,'c+'); if(!$h) return false;
+  if(!@flock($h,LOCK_EX)){ fclose($h); return false; }
+  $map=json_decode((string)stream_get_contents($h),true);
+  if(!is_array($map)) $map=[];
+  $map=$fn($map);
+  ftruncate($h,0); rewind($h);
+  fwrite($h,json_encode($map,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+  fflush($h); @flock($h,LOCK_UN); fclose($h);
+  return true;
+}
 function unitCode($v){
   $c=strtoupper(trim((string)$v));
   $allow=['HUR','H87','C62','LS','DAY','WEE','MON','ANN','MIN','SEC'];
@@ -129,10 +151,17 @@ if ($targetExists && !$force && ($prev === '' || $prev === 'vorlage.xml' || $pre
   fail('Eine Rechnung mit dieser Nummer ist bereits vorhanden. Überschreiben?',409,'exists',['file'=>$newBase]);
 }
 
+// Beim Umbenennen wird die alte Datei erst NACH erfolgreichem Schreiben der neuen
+// entfernt — schlägt Validierung oder Konvertierung fehl, bleibt die Rechnung erhalten.
+$oldXmlToDelete = null;
+$oldRnForStatus = null;
 if ($prev !== '' && preg_match('/^[\w.\-]+\.xml$/i',$prev) && $prev !== 'vorlage.xml' && $prev !== $newBase) {
   $oldXml = realpath(OUTBOX_DIR . DIRECTORY_SEPARATOR . $prev);
   $base = realpath(OUTBOX_DIR);
-  if ($oldXml && $base && strpos($oldXml,$base . DIRECTORY_SEPARATOR)===0 && is_file($oldXml)) @unlink($oldXml);
+  if ($oldXml && $base && strpos($oldXml,$base . DIRECTORY_SEPARATOR)===0 && is_file($oldXml)) {
+    $oldXmlToDelete = $oldXml;
+    $oldRnForStatus = preg_replace('/\.xml$/i','', basename($oldXml));
+  }
 }
 
 $iban = strtoupper(preg_replace('/\s+/','', (string)($bank['iban'] ?? '')));
@@ -184,13 +213,10 @@ $invType=invoiceTypeCode($det['typ'] ?? '380');
 $inv->appendChild(el($dom, 'cbc:InvoiceTypeCode',$invType));
 
 $preceding=trim((string)($det['vorgaenger_rechnung'] ?? ''));
-if($invType==='384' && $preceding!==''){
-  $br=$dom->createElement('cac:BillingReference');
-  $idr=$dom->createElement('cac:InvoiceDocumentReference');
-  $idr->appendChild(el($dom, 'cbc:ID',$preceding));
-  $br->appendChild($idr);
-  $inv->appendChild($br);
-}
+// BR-DE-26: Eine korrigierte Rechnung (384) MUSS auf die Vorgängerrechnung verweisen.
+// Geschrieben wird die Referenz (BT-25) aber bei JEDEM Typ, wenn sie gefüllt ist —
+// EN 16931 erlaubt das generell; API-Weg und Konverter behandeln sie ebenso typ-frei.
+if($invType==='384' && $preceding==='') fail('Fehler: Korrigierte Rechnung (Typ 384) benötigt die Rechnungsnummer der Vorgängerrechnung.',400);
 
 if (!empty($det['beschreibung'])) $inv->appendChild(el($dom, 'cbc:Note', (string)$det['beschreibung']));
 $inv->appendChild(el($dom, 'cbc:DocumentCurrencyCode','EUR'));
@@ -198,6 +224,16 @@ $buyerRef = trim((string)($det['buyer_reference'] ?? ''));
 if ($buyerRef === '') $buyerRef = $buyerEid;
 $buyerRef = preg_replace('/[\x00-\x1F\x7F]/', '', $buyerRef);
 $inv->appendChild(el($dom, 'cbc:BuyerReference', $buyerRef));
+
+// cac:BillingReference gehört laut UBL-2.1-Sequenz HINTER den cbc-Block
+// (…InvoiceTypeCode → Note → DocumentCurrencyCode → BuyerReference → BillingReference)
+if($preceding!==''){
+  $br=$dom->createElement('cac:BillingReference');
+  $idr=$dom->createElement('cac:InvoiceDocumentReference');
+  $idr->appendChild(el($dom, 'cbc:ID',$preceding));
+  $br->appendChild($idr);
+  $inv->appendChild($br);
+}
 
 
 $supp = $dom->createElement('cac:AccountingSupplierParty');
@@ -467,5 +503,17 @@ $ciiOk = ubl_to_cii($tmpUbl, $file);
 @unlink($tmpUbl);
 
 if (!$ciiOk) fail('Fehler beim Speichern',500);
+
+// Umbenennen: neue Datei steht — jetzt alte Datei entfernen und Status-Eintrag mitnehmen
+if ($oldXmlToDelete !== null) {
+  @unlink($oldXmlToDelete);
+  statusRmw(DATA_ROOT . '/status.json', function(array $map) use ($oldRnForStatus, $rn) {
+    if ($oldRnForStatus !== null && $oldRnForStatus !== '' && isset($map[$oldRnForStatus])) {
+      $map[$rn] = $map[$oldRnForStatus];
+      unset($map[$oldRnForStatus]);
+    }
+    return $map;
+  });
+}
 
 j(200,['ok'=>true,'msg'=>'XML gespeichert','file'=>basename($file)]);

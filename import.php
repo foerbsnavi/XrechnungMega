@@ -19,28 +19,24 @@ function imp_json($http, $arr) {
   exit;
 }
 
-function imp_load_status(): array {
-  if (!defined('STATUS_FILE') || !is_file(STATUS_FILE)) return [];
-  $h = @fopen(STATUS_FILE, 'r');
-  if (!$h) return [];
-  @flock($h, LOCK_SH);
-  $c = stream_get_contents($h);
-  @flock($h, LOCK_UN);
-  @fclose($h);
-  $a = json_decode((string)$c, true);
-  return is_array($a) ? $a : [];
-}
-
-function imp_save_status(array $map): bool {
+// Read-Modify-Write unter EINEM exklusiven Lock auf der Zieldatei — die frühere
+// Variante (Snapshot laden, am Ende komplett zurückschreiben über eine geteilte
+// .tmp-Datei) konnte parallele Status-Änderungen überschreiben.
+function imp_status_rmw(callable $fn): bool {
   if (!defined('STATUS_FILE')) return false;
-  $tmp = STATUS_FILE . '.tmp';
-  $h = @fopen($tmp, 'w');
+  $dir = dirname(STATUS_FILE);
+  if (!is_dir($dir)) @mkdir($dir, 0755, true);
+  $h = @fopen(STATUS_FILE, 'c+');
   if (!$h) return false;
-  @flock($h, LOCK_EX);
-  fwrite($h, json_encode($map, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-  @flock($h, LOCK_UN);
-  @fclose($h);
-  return rename($tmp, STATUS_FILE);
+  if (!@flock($h, LOCK_EX)) { fclose($h); return false; }
+  $map = json_decode((string)stream_get_contents($h), true);
+  if (!is_array($map)) $map = [];
+  $map = $fn($map);
+  ftruncate($h, 0); rewind($h);
+  fwrite($h, json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+  fflush($h);
+  @flock($h, LOCK_UN); fclose($h);
+  return true;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') imp_json(405, ['ok' => false, 'msg' => 'Ungültige Anfrage']);
@@ -75,8 +71,7 @@ const IMP_CII_NS    = 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:
 
 $imported = []; $skipped = []; $invalid = []; $limit = [];
 $existing = count(glob(OUTBOX_DIR . '/*.xml') ?: []);
-$statusMap = imp_load_status();
-$statusDirty = false;
+$newStatus = [];
 
 foreach ($files as $f) {
   $label = $f['name'] !== '' ? basename($f['name']) : 'Datei';
@@ -122,6 +117,9 @@ foreach ($files as $f) {
   $id = trim($xp->evaluate('string(/rsm:CrossIndustryInvoice/rsm:ExchangedDocument/ram:ID)'));
   $rn = trim(preg_replace('/[^a-zA-Z0-9_-]/', '_', $id), '_-');
   if ($rn === '') { $invalid[] = ['file' => $label, 'grund' => 'Keine Rechnungsnummer in der Datei']; continue; }
+  // Eigene Dateien tragen immer eine bereits bereinigte Nummer. Weicht die innere
+  // ID vom Dateinamen ab, wären Status/Liste dauerhaft inkonsistent -> ablehnen.
+  if ($rn !== $id) { $invalid[] = ['file' => $label, 'grund' => 'Rechnungsnummer enthält unzulässige Zeichen (kein XrechnungMega-Original)']; continue; }
 
   $target = rtrim(OUTBOX_DIR, '/\\') . DIRECTORY_SEPARATOR . $rn . '.xml';
   if (strtolower($rn) === 'vorlage' || is_file($target)) { $skipped[] = ['file' => $label, 'nr' => $rn]; continue; }
@@ -134,10 +132,15 @@ foreach ($files as $f) {
   $existing++;
   $imported[] = ['file' => $label, 'nr' => $rn, 'xml' => $rn . '.xml'];
 
-  if (empty($statusMap[$rn])) { $statusMap[$rn] = 'Offen'; $statusDirty = true; }
+  $newStatus[$rn] = 'Offen';
 }
 
-if ($statusDirty) imp_save_status($statusMap);
+if ($newStatus) {
+  imp_status_rmw(function(array $map) use ($newStatus) {
+    foreach ($newStatus as $rn => $st) { if (empty($map[$rn])) $map[$rn] = $st; }
+    return $map;
+  });
+}
 
 $last = $imported ? end($imported)['xml'] : '';
 imp_json(200, [

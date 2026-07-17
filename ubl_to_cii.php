@@ -61,6 +61,18 @@ function ubl_to_cii($ublPath,$ciiPath){
   $payable=$nf($s('/u:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount'));
   $taxAmt=$nf($s('/u:Invoice/cac:TaxTotal/cbc:TaxAmount')); if($taxAmt==='') $taxAmt='0.00';
 
+  // Felder, die der Konverter früher VERWORFEN hat (Drift zum invoice_core-Weg):
+  // Rabatt (BG-20), Vorauszahlung (BT-113), Vorgänger-Referenz (BG-3),
+  // Zahlungsart/-referenz (BT-81/BT-83), Zeilensumme (BT-106), Brutto (BT-112).
+  $lineExtRaw =$s('/u:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount');
+  $allowRaw   =$s('/u:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount');
+  $prepaidRaw =$s('/u:Invoice/cac:LegalMonetaryTotal/cbc:PrepaidAmount');
+  $taxInclRaw =$s('/u:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount');
+  $payCode    =$s('/u:Invoice/cac:PaymentMeans/cbc:PaymentMeansCode')?:'58';
+  $payId      =$s('/u:Invoice/cac:PaymentMeans/cbc:PaymentID');
+  $precedingId=$s('/u:Invoice/cac:BillingReference/cac:InvoiceDocumentReference/cbc:ID');
+  $allowVal   =(float)str_replace(',','.',$allowRaw===''?'0':$allowRaw);
+
   $linesXml=''; $rateBucket=[];
   foreach($xp->query('/u:Invoice/cac:InvoiceLine') as $ln){
     $lid=trim($xp->evaluate('string(cbc:ID)',$ln))?:'1';
@@ -71,7 +83,7 @@ function ubl_to_cii($ublPath,$ciiPath){
     $lrate=trim($xp->evaluate('string(cac:Item/cac:ClassifiedTaxCategory/cbc:Percent)',$ln));
     if($lrate==='') $lrate=trim($xp->evaluate('string(/u:Invoice/cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent)'));
     $lineTotal=number_format((float)$qty*(float)$price,2,'.','');
-    $rateKey=$lrate!==''?$lrate:'0';
+    $rateKey=$nf($lrate!==''?$lrate:'0');
     $rateBucket[$rateKey]=($rateBucket[$rateKey]??0)+(float)$lineTotal;
 
     $linesXml.=
@@ -81,24 +93,44 @@ function ubl_to_cii($ublPath,$ciiPath){
         '<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>'.$price.'</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>'.
         '<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="'.htmlspecialchars($u).'">'.$qty.'</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>'.
         '<ram:SpecifiedLineTradeSettlement>'.
-          '<ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>'.($rateKey==='0'?'Z':'S').'</ram:CategoryCode>'.($rateKey!=='0'?'<ram:RateApplicablePercent>'.htmlspecialchars($lrate).'</ram:RateApplicablePercent>':'').'</ram:ApplicableTradeTax>'.
+          '<ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>'.(((float)$rateKey)>0?'S':'Z').'</ram:CategoryCode>'.(((float)$rateKey)>0?'<ram:RateApplicablePercent>'.$rateKey.'</ram:RateApplicablePercent>':'').'</ram:ApplicableTradeTax>'.
           '<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>'.$lineTotal.'</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>'.
         '</ram:SpecifiedLineTradeSettlement>'.
       '</ram:IncludedSupplyChainTradeLineItem>';
   }
 
-  $taxXml='';
-  foreach($rateBucket as $rate=>$basis){
-    $basisFmt=number_format($basis,2,'.','');
-    $calc=number_format($rate==='0'?0.00:($basis*((float)$rate/100)),2,'.','');
+  // Steuer-Aufschlüsselung bevorzugt aus den UBL-TaxSubtotals übernehmen — die tragen
+  // bereits die (bei Rabatt reduzierten) Basen. Das frühere Neu-Rechnen aus den
+  // unrabattierten Zeilensummen verletzte bei Rabatten BR-CO-14.
+  $taxXml=''; $subBases=[];
+  foreach($xp->query('/u:Invoice/cac:TaxTotal/cac:TaxSubtotal') as $sub){
+    $taxable=$nf($xp->evaluate('string(cbc:TaxableAmount)',$sub));
+    $ta=$nf($xp->evaluate('string(cbc:TaxAmount)',$sub));
+    $pr=trim($xp->evaluate('string(cac:TaxCategory/cbc:Percent)',$sub));
+    $rateKey=$nf($pr!==''?$pr:'0');
+    $subBases[$rateKey]=(float)$taxable;
     $taxXml.=
       '<ram:ApplicableTradeTax>'.
-        '<ram:CalculatedAmount>'.$calc.'</ram:CalculatedAmount>'.
+        '<ram:CalculatedAmount>'.$ta.'</ram:CalculatedAmount>'.
         '<ram:TypeCode>VAT</ram:TypeCode>'.
-        '<ram:BasisAmount>'.$basisFmt.'</ram:BasisAmount>'.
-        '<ram:CategoryCode>'.($rate==='0'?'Z':'S').'</ram:CategoryCode>'.
-        ($rate==='0'?'':'<ram:RateApplicablePercent>'.htmlspecialchars($rate).'</ram:RateApplicablePercent>').
+        '<ram:BasisAmount>'.$taxable.'</ram:BasisAmount>'.
+        '<ram:CategoryCode>'.(((float)$rateKey)>0?'S':'Z').'</ram:CategoryCode>'.
+        (((float)$rateKey)>0?'<ram:RateApplicablePercent>'.$rateKey.'</ram:RateApplicablePercent>':'').
       '</ram:ApplicableTradeTax>';
+  }
+  if($taxXml===''){
+    foreach($rateBucket as $rate=>$basis){
+      $basisFmt=number_format($basis,2,'.','');
+      $calc=number_format(((float)$rate)<=0?0.00:($basis*((float)$rate/100)),2,'.','');
+      $taxXml.=
+        '<ram:ApplicableTradeTax>'.
+          '<ram:CalculatedAmount>'.$calc.'</ram:CalculatedAmount>'.
+          '<ram:TypeCode>VAT</ram:TypeCode>'.
+          '<ram:BasisAmount>'.$basisFmt.'</ram:BasisAmount>'.
+          '<ram:CategoryCode>'.(((float)$rate)>0?'S':'Z').'</ram:CategoryCode>'.
+          (((float)$rate)>0?'<ram:RateApplicablePercent>'.htmlspecialchars((string)$rate).'</ram:RateApplicablePercent>':'').
+        '</ram:ApplicableTradeTax>';
+    }
   }
   if($taxXml===''){
     $taxXml=
@@ -111,8 +143,35 @@ function ubl_to_cii($ublPath,$ciiPath){
       '</ram:ApplicableTradeTax>';
   }
 
+  // Dokument-Rabatt (BG-20): je Steuersatz ein Abschlag (ChargeIndicator=false).
+  // Anteil = unrabattierte Zeilensumme minus reduzierte Basis aus dem Subtotal.
+  // Ohne diese Elemente verwarf der Konverter den Rabatt komplett (BR-CO-10/13).
+  $allowanceChargeXml=''; $allowanceTotalXml='';
+  if($allowVal>0.005){
+    foreach($rateBucket as $rate=>$basis){
+      $orig=round((float)$basis,2);
+      $red=array_key_exists($rate,$subBases)?round($subBases[$rate],2):$orig;
+      $cut=round($orig-$red,2);
+      if($cut<=0) continue;
+      $allowanceChargeXml.=
+        '<ram:SpecifiedTradeAllowanceCharge>'.
+          '<ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator>'.
+          '<ram:ActualAmount>'.$nf($cut).'</ram:ActualAmount>'.
+          '<ram:Reason>Rabatt</ram:Reason>'.
+          '<ram:CategoryTradeTax>'.
+            '<ram:TypeCode>VAT</ram:TypeCode>'.
+            '<ram:CategoryCode>'.(((float)$rate)>0?'S':'Z').'</ram:CategoryCode>'.
+            (((float)$rate)>0?'<ram:RateApplicablePercent>'.htmlspecialchars((string)$rate).'</ram:RateApplicablePercent>':'').
+          '</ram:CategoryTradeTax>'.
+        '</ram:SpecifiedTradeAllowanceCharge>';
+    }
+    $allowanceTotalXml='<ram:AllowanceTotalAmount>'.$nf($allowVal).'</ram:AllowanceTotalAmount>';
+  }
+
   $termsXml=$due!==''?'<ram:SpecifiedTradePaymentTerms><ram:DueDateDateTime><udt:DateTimeString format="102">'.$due.'</udt:DateTimeString></ram:DueDateDateTime></ram:SpecifiedTradePaymentTerms>':'';
-  $grand=$nf(((float)$net+(float)$taxAmt));
+  $grand=$taxInclRaw!==''?$nf($taxInclRaw):$nf(((float)$net+(float)$taxAmt));
+  $lineTotalOut=$lineExtRaw!==''?$nf($lineExtRaw):$net;
+  $prepaidOut=$prepaidRaw!==''?$nf($prepaidRaw):'0.00';
 
   $sellerContact=
     '<ram:DefinedTradeContact><ram:PersonName>'.htmlspecialchars($sName).'</ram:PersonName>'
@@ -177,24 +236,38 @@ function ubl_to_cii($ublPath,$ciiPath){
         .'<ram:PaymentReference>'.htmlspecialchars($id).'</ram:PaymentReference>'
         .'<ram:InvoiceCurrencyCode>'.htmlspecialchars($cur).'</ram:InvoiceCurrencyCode>'
         .'<ram:SpecifiedTradeSettlementPaymentMeans>'
-          .'<ram:TypeCode>58</ram:TypeCode>'
+          .'<ram:TypeCode>'.htmlspecialchars($payCode).'</ram:TypeCode>'
+          .($payId!==''?'<ram:Information>'.htmlspecialchars($payId).'</ram:Information>':'')
           .$accXml
           .($bic!==''?'<ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>'.htmlspecialchars($bic).'</ram:BICID>'.($bankName!==''?'<ram:Name>'.htmlspecialchars($bankName).'</ram:Name>':'').'</ram:PayeeSpecifiedCreditorFinancialInstitution>':'')
         .'</ram:SpecifiedTradeSettlementPaymentMeans>'
         .$taxXml
+        .$allowanceChargeXml
         .$termsXml
         .'<ram:SpecifiedTradeSettlementHeaderMonetarySummation>'
-          .'<ram:LineTotalAmount>'.$net.'</ram:LineTotalAmount>'
+          .'<ram:LineTotalAmount>'.$lineTotalOut.'</ram:LineTotalAmount>'
+          .$allowanceTotalXml
           .'<ram:TaxBasisTotalAmount>'.$net.'</ram:TaxBasisTotalAmount>'
           .'<ram:TaxTotalAmount currencyID="'.htmlspecialchars($cur).'">'.$taxAmt.'</ram:TaxTotalAmount>'
           .'<ram:GrandTotalAmount>'.$grand.'</ram:GrandTotalAmount>'
+          .'<ram:TotalPrepaidAmount>'.$prepaidOut.'</ram:TotalPrepaidAmount>'
           .'<ram:DuePayableAmount>'.$payable.'</ram:DuePayableAmount>'
         .'</ram:SpecifiedTradeSettlementHeaderMonetarySummation>'
+        // BT-25/BT-26: Referenz auf die Vorgängerrechnung (Storno/Korrektur) gehört
+        // laut CII-Schema NACH die Summation (wie im invoice_core-Weg, Fix 1.0.10).
+        .($precedingId!==''?'<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>'.htmlspecialchars($precedingId).'</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>':'')
       .'</ram:ApplicableHeaderTradeSettlement>'
     .'</rsm:SupplyChainTradeTransaction>'
   .'</rsm:CrossIndustryInvoice>';
 
-  return file_put_contents($ciiPath,$cii)!==false;
+  // Byte-genau prüfen: ein Teil-Write (voller Datenträger) wäre eine kaputte XML —
+  // die darf nicht als Erfolg durchgehen und nicht liegen bleiben.
+  $written=file_put_contents($ciiPath,$cii,LOCK_EX);
+  if($written===false || $written!==strlen($cii)){
+    if($written!==false) @unlink($ciiPath);
+    return false;
+  }
+  return true;
 }
 
 

@@ -62,6 +62,12 @@ function numInput($v): string {
 }
 
 $id=$issue=$due=$service=$note=$payName=$bankName=$iban=$bic='';
+// BT-10 Leitweg-ID und BT-25 Vorgaengerrechnung: muessen ausgelesen und im Formular
+// mitgefuehrt werden. save.php baut die XML komplett neu auf; was das Formular nicht
+// sendet, ist danach weg bzw. wird ersetzt (buyer_reference faellt auf die
+// Empfaenger-E-Adresse zurueck, und Typ 384 laesst sich ohne Vorgaenger gar nicht
+// speichern — BR-DE-26).
+$buyerRef=$preceding='';
 $invType='380';
 $types=[
   '380'=>'Rechnung',
@@ -88,6 +94,8 @@ if ($isTemplate || $root === 'Invoice') {
   $service = d2p($s('/u:Invoice/cac:Delivery/cbc:ActualDeliveryDate'));
   $note = $s('/u:Invoice/cbc:Note');
   $invType = $s('/u:Invoice/cbc:InvoiceTypeCode') ?: '380';
+  $buyerRef = $s('/u:Invoice/cbc:BuyerReference');
+  $preceding = $s('/u:Invoice/cac:BillingReference/cac:InvoiceDocumentReference/cbc:ID');
 
   $suppName = $s('/u:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name');
   $suppStreet = $s('/u:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:StreetName');
@@ -144,6 +152,8 @@ if ($isTemplate || $root === 'Invoice') {
   $service = d2p102($s('/rsm:CrossIndustryInvoice/rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeDelivery/ram:ActualDeliverySupplyChainEvent/ram:OccurrenceDateTime/udt:DateTimeString'));
   $invType = $s('/rsm:CrossIndustryInvoice/rsm:ExchangedDocument/ram:TypeCode') ?: '380';
   $note = $s('/rsm:CrossIndustryInvoice/rsm:ExchangedDocument/ram:IncludedNote/ram:Content');
+  $buyerRef = $s('/rsm:CrossIndustryInvoice/rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeAgreement/ram:BuyerReference');
+  $preceding = $s('/rsm:CrossIndustryInvoice/rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeSettlement/ram:InvoiceReferencedDocument/ram:IssuerAssignedID');
 
   $sp='/rsm:CrossIndustryInvoice/rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeAgreement/ram:SellerTradeParty';
   $bp='/rsm:CrossIndustryInvoice/rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeAgreement/ram:BuyerTradeParty';
@@ -196,6 +206,12 @@ if ($isTemplate || $root === 'Invoice') {
 if ($service === '') $service = $issue;
 
 if ($isTemplate) {
+  // Die Vorlage traegt in BuyerReference den Platzhalter '0' — kein echter Wert.
+  // Ungefiltert durchgereicht landete er in jeder neuen Rechnung, weil save.php
+  // strikt auf '' prueft ('0' !== '') und der Fallback auf die Empfaenger-E-Adresse
+  // dann nicht mehr greift. Der API-Weg (invoice_core) behandelt '0' ebenfalls als
+  // Nicht-Wert; hier bleibt es dabei.
+  $buyerRef = '';
   $today = (new DateTime('today'))->format('d.m.Y');
   if ($issue === '') $issue = $today;
   if ($service === '') $service = $issue;
@@ -207,39 +223,54 @@ if ($isTemplate) {
 <form id="invoiceForm" action="save.php" method="post">
 <input type="hidden" name="file" value="<?php echo h($file); ?>">
 <input type="hidden" name="csrf" value="<?php echo h($_SESSION['csrf'] ?? ''); ?>">
+<?php /* BT-10 Leitweg-ID und BT-25 Vorgaengerrechnung unveraendert durchreichen.
+        save.php baut die XML komplett neu — was hier nicht mitkommt, ist danach weg:
+        eine vorhandene Leitweg-ID wurde sonst durch die Empfaenger-E-Adresse ersetzt
+        (save.php-Fallback), und Typ 384 liess sich ohne Vorgaenger gar nicht speichern
+        (BR-DE-26). Bewusst hidden: sichtbare Felder wuerden das Rechnungsbild aendern,
+        und das ist rechtlich abgenommen (Foerb, 17.07.) — siehe xrechnung_design.md. */ ?>
+<input type="hidden" name="details[buyer_reference]" value="<?php echo h($buyerRef); ?>">
+<input type="hidden" name="details[vorgaenger_rechnung]" value="<?php echo h($preceding); ?>">
 
+<?php /* aria-label statt sichtbarer <label>: Die Felder tragen ihre Bedeutung hier
+        allein ueber die Position im Rechnungsbild (Briefkopf, Anschrift). Sichtbare
+        Beschriftungen wuerden das rechtlich abgenommene Layout veraendern (Foerb,
+        17.07.) — aria-label ist unsichtbar und aendert kein Pixel. */ ?>
 <div class="header">
-  <input type="text" name="absender[name]" value="<?php echo h($suppName); ?>">
-  <input type="text" name="absender[adresse]" value="<?php echo h($suppStreet); ?>">
-  <input type="text" name="absender[plzOrt]" value="<?php echo h(trim($suppZip.' '.$suppCity)); ?>">
-  <input type="text" name="absender[telefon]" value="<?php echo h($suppTel); ?>">
-  <input type="text" name="absender[email]" value="<?php echo h($suppMail); ?>">
-  <input type="text" name="absender[ustid]" value="<?php echo h($suppUst); ?>">
+  <input type="text" name="absender[name]" aria-label="Absender: Name / Firma" value="<?php echo h($suppName); ?>">
+  <input type="text" name="absender[adresse]" aria-label="Absender: Straße und Hausnummer" value="<?php echo h($suppStreet); ?>">
+  <input type="text" name="absender[plzOrt]" aria-label="Absender: PLZ und Ort" value="<?php echo h(trim($suppZip.' '.$suppCity)); ?>">
+  <input type="text" name="absender[telefon]" aria-label="Absender: Telefon" value="<?php echo h($suppTel); ?>">
+  <input type="text" name="absender[email]" aria-label="Absender: E-Mail" value="<?php echo h($suppMail); ?>">
+  <input type="text" name="absender[ustid]" aria-label="Absender: USt-IdNr." value="<?php echo h($suppUst); ?>">
 </div>
 
 <div class="recipient">
-  <input type="text" name="empfaenger[name]" value="<?php echo h($custName); ?>">
-  <input type="text" name="empfaenger[adresse]" value="<?php echo h($custStreet); ?>">
-  <input type="text" name="empfaenger[plzOrt]" value="<?php echo h(trim($custZip.' '.$custCity)); ?>">
-  <input type="text" name="empfaenger[email]" required placeholder="Buyer e-Adresse (z. B. Peppol-ID oder E-Mail)" value="<?php echo h($custMail); ?>">
+  <input type="text" name="empfaenger[name]" aria-label="Empfänger: Name / Firma" value="<?php echo h($custName); ?>">
+  <input type="text" name="empfaenger[adresse]" aria-label="Empfänger: Straße und Hausnummer" value="<?php echo h($custStreet); ?>">
+  <input type="text" name="empfaenger[plzOrt]" aria-label="Empfänger: PLZ und Ort" value="<?php echo h(trim($custZip.' '.$custCity)); ?>">
+  <input type="text" name="empfaenger[email]" required aria-label="Empfänger: E-Adresse (Peppol-ID oder E-Mail), Pflichtfeld" placeholder="Buyer e-Adresse (z. B. Peppol-ID oder E-Mail)" value="<?php echo h($custMail); ?>">
 </div>
 
 <div class="invoice-details">
-  <select class="grau select" name="details[typ]">
+  <select class="grau select" name="details[typ]" aria-label="Rechnungstyp">
     <?php foreach($types as $code=>$label): ?>
       <option value="<?php echo h($code); ?>" <?php echo ((string)$invType===(string)$code)?'selected':''; ?>><?php echo h($label); ?></option>
     <?php endforeach; ?>
   </select>
+  <?php /* Die Zelle links ist optisch die Beschriftung, technisch aber nur Text ohne
+          Bezug zum Feld. <label for> verknuepft den VORHANDENEN Text — es kommt
+          nichts Sichtbares dazu, das Bild bleibt identisch. */ ?>
   <table>
-    <tr><td style="width:140px;text-align:right;">Rechnungsnummer:</td><td style="width:100px"><input type="text" name="details[rechnungsnummer]" value="<?php echo h($id); ?>"></td></tr>
-    <tr><td style="text-align:right;">Rechnungsdatum:</td><td><input type="text" name="details[rechnungsdatum]" value="<?php echo h($issue); ?>"></td></tr>
-    <tr><td style="text-align:right;">Fälligkeitsdatum:</td><td><input type="text" name="details[faelligkeitsdatum]" value="<?php echo h($due); ?>"></td></tr>
-    <tr><td style="text-align:right;">Leistungsdatum:</td><td><input type="text" name="details[leistungsdatum]" value="<?php echo h($service); ?>"></td></tr>
-    <tr class="grau"><td style="text-align:right;">Zu Zahlen EUR:</td><td><input class="grau" type="text" id="payableTop" name="details[gesamtbetrag]" value="<?php echo h(moneyFmt($payableAmt).' €'); ?>" readonly></td></tr>
+    <tr><td style="width:140px;text-align:right;"><label for="fld-rgnr">Rechnungsnummer:</label></td><td style="width:100px"><input type="text" id="fld-rgnr" name="details[rechnungsnummer]" value="<?php echo h($id); ?>"></td></tr>
+    <tr><td style="text-align:right;"><label for="fld-rgdatum">Rechnungsdatum:</label></td><td><input type="text" id="fld-rgdatum" name="details[rechnungsdatum]" value="<?php echo h($issue); ?>"></td></tr>
+    <tr><td style="text-align:right;"><label for="fld-faellig">Fälligkeitsdatum:</label></td><td><input type="text" id="fld-faellig" name="details[faelligkeitsdatum]" value="<?php echo h($due); ?>"></td></tr>
+    <tr><td style="text-align:right;"><label for="fld-leistung">Leistungsdatum:</label></td><td><input type="text" id="fld-leistung" name="details[leistungsdatum]" value="<?php echo h($service); ?>"></td></tr>
+    <tr class="grau"><td style="text-align:right;"><label for="payableTop">Zu Zahlen EUR:</label></td><td><input class="grau" type="text" id="payableTop" name="details[gesamtbetrag]" value="<?php echo h(moneyFmt($payableAmt).' €'); ?>" readonly></td></tr>
   </table>
 </div>
 
-<input class="rechnungsbeschreibung" type="text" name="details[beschreibung]" value="<?php echo h($note); ?>">
+<input class="rechnungsbeschreibung" type="text" name="details[beschreibung]" aria-label="Rechnungsbeschreibung" value="<?php echo h($note); ?>">
 
 <div class="table-scroll" role="region" aria-label="Rechnungspositionen, horizontal scrollbar" tabindex="0">
 <table class="invoice-table">
@@ -249,18 +280,21 @@ if ($isTemplate) {
   <tbody>
   <?php foreach($lines as $i=>$ln): ?>
     <tr>
-      <td><input type="text" name="positionen[<?php echo (int)$i; ?>][beschreibung]" value="<?php echo h($ln['desc']); ?>"></td>
+      <td><input type="text" name="positionen[<?php echo (int)$i; ?>][beschreibung]" aria-label="Position <?php echo (int)$i+1; ?>: Beschreibung" value="<?php echo h($ln['desc']); ?>"></td>
       <td>
-        <select class="plain-select" name="positionen[<?php echo (int)$i; ?>][einheit]">
+        <select class="plain-select" name="positionen[<?php echo (int)$i; ?>][einheit]" aria-label="Position <?php echo (int)$i+1; ?>: Einheit">
           <?php foreach(unitOptions() as $code=>$label): ?>
             <option value="<?php echo h($code); ?>" <?php echo (strtoupper($ln['unit'])===strtoupper($code))?'selected':''; ?>><?php echo h($label); ?></option>
           <?php endforeach; ?>
         </select>
       </td>
-      <td><input type="number" step="0.01" inputmode="decimal" name="positionen[<?php echo (int)$i; ?>][menge]" value="<?php echo h($ln['qty']); ?>"></td>
-      <td><input type="text" name="positionen[<?php echo (int)$i; ?>][einzelpreis]" value="<?php echo h($ln['price']); ?>"></td>
+      <td><input type="number" step="0.01" inputmode="decimal" name="positionen[<?php echo (int)$i; ?>][menge]" aria-label="Position <?php echo (int)$i+1; ?>: Menge" value="<?php echo h($ln['qty']); ?>"></td>
+      <td><input type="text" name="positionen[<?php echo (int)$i; ?>][einzelpreis]" aria-label="Position <?php echo (int)$i+1; ?>: Einzelpreis" value="<?php echo h($ln['price']); ?>"></td>
       <td style="width:100px;"><span><?php echo h($ln['line']); ?> €</span></td>
-      <td style="width:10px;" class="noprint pointer"><p onclick="this.closest('tr').remove()">-</p></td>
+      <?php /* Loeschen ist ein <p>: nicht fokussierbar, ohne Rolle, Name nur "-".
+              Ein echter <button> wuerde die Optik aendern (style.css:56) — deshalb
+              Rolle/Name/Tastatur nachgeruestet statt das Element getauscht. */ ?>
+      <td style="width:10px;" class="noprint pointer"><p role="button" tabindex="0" aria-label="Position <?php echo (int)$i+1; ?> entfernen" onclick="this.closest('tr').remove()">-</p></td>
     </tr>
   <?php endforeach; ?>
   </tbody>
@@ -269,32 +303,48 @@ if ($isTemplate) {
 
 <button type="button" onclick="
   const tb=document.querySelector('.invoice-table tbody');
-  const i=tb.querySelectorAll('tr').length;
+  // Index aus dem HOECHSTEN vergebenen Index ableiten, nicht aus der Zeilenanzahl:
+  // nach dem Loeschen einer Position ist die Anzahl kleiner als der hoechste Index,
+  // eine neue Zeile bekaeme sonst einen bereits vergebenen Namen und wuerde die
+  // bestehende Position beim Speichern ueberschreiben (PHP: letzter Wert gewinnt).
+  let max=-1;
+  tb.querySelectorAll('input[name],select[name]').forEach(el=>{
+    const m=/^positionen\[(\d+)\]/.exec(el.getAttribute('name')||'');
+    if(m) max=Math.max(max, Number(m[1]));
+  });
+  const i=max+1;
   const units=`<?php foreach(unitOptions() as $code=>$label): ?><option value='<?php echo h($code); ?>'><?php echo h($label); ?></option><?php endforeach; ?>`;
   const r=document.createElement('tr');
-  r.innerHTML=`<td><input type='text' name='positionen[${i}][beschreibung]' value=''></td>
-               <td><select class='plain-select' name='positionen[${i}][einheit]'>${units}</select></td>
-               <td><input type='number' step='0.01' inputmode='decimal' name='positionen[${i}][menge]' value='0'></td>
-               <td><input type='text' name='positionen[${i}][einzelpreis]' value='0,00'></td>
+  // Vorlaeufige Nummer fuer die Vorlesehilfe. Sie kann hier gar nicht sicher
+  // stimmen (nach einem Loeschen haette eine bestehende Zeile dieselbe) —
+  // renumberPositionen() in index.php zaehlt unmittelbar nach dem Klick alle
+  // Zeilen an der sichtbaren Reihenfolge neu durch und richtet das gerade.
+  const nr=tb.querySelectorAll('tr').length+1;
+  r.innerHTML=`<td><input type='text' name='positionen[${i}][beschreibung]' aria-label='Position ${nr}: Beschreibung' value=''></td>
+               <td><select class='plain-select' name='positionen[${i}][einheit]' aria-label='Position ${nr}: Einheit'>${units}</select></td>
+               <td><input type='number' step='0.01' inputmode='decimal' name='positionen[${i}][menge]' aria-label='Position ${nr}: Menge' value='0'></td>
+               <td><input type='text' name='positionen[${i}][einzelpreis]' aria-label='Position ${nr}: Einzelpreis' value='0,00'></td>
                <td style='width:100px;'><span>0,00 €</span></td>
-               <td style='width:10px;' class='noprint pointer'><p onclick='this.closest(&quot;tr&quot;).remove()'>-</p></td>`;
+               <td style='width:10px;' class='noprint pointer'><p role='button' tabindex='0' aria-label='Position ${nr} entfernen' onclick='this.closest(&quot;tr&quot;).remove()'>-</p></td>`;
   tb.appendChild(r);
-">+</button>
+  const ziel=r.querySelector('input');
+  if(ziel) ziel.focus();
+" aria-label="Position hinzufügen" title="Position hinzufügen">+</button>
 
 <div class="summary">
   <table>
-    <tr><td style="width:140px;text-align:right;">Nettobetrag:</td><td style="width:100px"><input type="text" name="zusammenfassung[nettobetrag]" value="<?php echo h(moneyFmt($net).' €'); ?>" readonly></td></tr>
-    <tr><td style="text-align:right;">Umsatzsteuer 19%:</td><td><input type="text" name="zusammenfassung[umsatzsteuer]" value="<?php echo h(moneyFmt($ustAmt).' €'); ?>" readonly></td></tr>
-    <tr class="grau"><td style="text-align:right;">Gesamtbetrag:</td><td><input class="grau" type="text" id="payableBottom" value="<?php echo h(moneyFmt($payableAmt).' €'); ?>" readonly></td></tr>
+    <tr><td style="width:140px;text-align:right;"><label for="fld-netto">Nettobetrag:</label></td><td style="width:100px"><input type="text" id="fld-netto" name="zusammenfassung[nettobetrag]" value="<?php echo h(moneyFmt($net).' €'); ?>" readonly></td></tr>
+    <tr><td style="text-align:right;"><label for="fld-ust">Umsatzsteuer 19%:</label></td><td><input type="text" id="fld-ust" name="zusammenfassung[umsatzsteuer]" value="<?php echo h(moneyFmt($ustAmt).' €'); ?>" readonly></td></tr>
+    <tr class="grau"><td style="text-align:right;"><label for="payableBottom">Gesamtbetrag:</label></td><td><input class="grau" type="text" id="payableBottom" value="<?php echo h(moneyFmt($payableAmt).' €'); ?>" readonly></td></tr>
   </table>
 </div>
 
 <div class="footer">
-  <input class="danke" type="text" name="zusammenfassung[danke]" value="Vielen Dank für den Auftrag!">
-  <input type="text" name="bankverbindung[name]" value="<?php echo h($payName); ?>">
-  <input type="text" name="bankverbindung[bank]" value="<?php echo h($bankName); ?>">
-  <input type="text" name="bankverbindung[iban]" value="<?php echo h($iban); ?>">
-  <input type="text" name="bankverbindung[bic]" value="<?php echo h($bic); ?>">
+  <input class="danke" type="text" name="zusammenfassung[danke]" aria-label="Schlusstext" value="Vielen Dank für den Auftrag!">
+  <input type="text" name="bankverbindung[name]" aria-label="Bankverbindung: Kontoinhaber" value="<?php echo h($payName); ?>">
+  <input type="text" name="bankverbindung[bank]" aria-label="Bankverbindung: Bank" value="<?php echo h($bankName); ?>">
+  <input type="text" name="bankverbindung[iban]" aria-label="Bankverbindung: IBAN" value="<?php echo h($iban); ?>">
+  <input type="text" name="bankverbindung[bic]" aria-label="Bankverbindung: BIC" value="<?php echo h($bic); ?>">
 </div>
 </form>
 </div>

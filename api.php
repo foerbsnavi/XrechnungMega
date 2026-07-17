@@ -263,7 +263,11 @@ function api_update(): void {
     $newRn   = trim(preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$data['rechnungsnummer']), '_-');
     $outFile = rtrim(OUTBOX_DIR, '/\\') . DIRECTORY_SEPARATOR . $newRn . '.xml';
 
-    // Alte Datei löschen wenn Nummer geändert
+    $result = xr_build_invoice($data, $outFile);
+    if (!$result['ok']) api_err($result['error']);
+
+    // Erst NACH erfolgreichem Bau die alte Datei entfernen (Nummer geändert) —
+    // schlägt der Bau fehl, bleibt die bestehende Rechnung unangetastet.
     if ($newRn !== $id && is_file($oldPath)) {
         @unlink($oldPath);
         // Status-Eintrag umbenennen
@@ -274,9 +278,6 @@ function api_update(): void {
             xr_save_status($statusMap);
         }
     }
-
-    $result = xr_build_invoice($data, $outFile);
-    if (!$result['ok']) api_err($result['error']);
 
     api_ok([
         'nachricht' => 'Rechnung aktualisiert',

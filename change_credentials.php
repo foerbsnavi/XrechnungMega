@@ -120,7 +120,7 @@ $currentUser = (string)($creds['username'] ?? '');
       transition:border-color .15s;
       outline:none;
     }
-    .form-group input:focus { border-color:#ea6b17; }
+    .form-group input:focus { border-color:#1f4e63; }
     .form-group .hint {
       font-size:.78rem;
       color:#9ca3af;
@@ -136,7 +136,7 @@ $currentUser = (string)($creds['username'] ?? '');
     .btn-save {
       width:100%;
       padding:.7rem;
-      background:#ea6b17;
+      background:#1f4e63;
       color:#fff;
       border:none;
       border-radius:8px;
@@ -145,7 +145,7 @@ $currentUser = (string)($creds['username'] ?? '');
       cursor:pointer;
       transition:background .15s;
     }
-    .btn-save:hover { background:#c95e13; }
+    .btn-save:hover { background:#163a4b; }
 
     .msg {
       border-radius:8px;
