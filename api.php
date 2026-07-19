@@ -415,7 +415,7 @@ function validate_required_fields(array $data): void {
     if (empty($data['empfaenger']['name']))        api_err('empfaenger.name fehlt');
     if (empty($data['positionen']) || !is_array($data['positionen']) || count($data['positionen']) === 0)
         api_err('positionen fehlt oder leer');
-    if (empty($data['absender']['name']))          api_err('absender.name fehlt (oder api_defaults.php konfigurieren)');
-    if (empty($data['absender']['email']))         api_err('absender.email fehlt (oder api_defaults.php konfigurieren)');
-    if (empty($data['bankverbindung']['iban']))    api_err('bankverbindung.iban fehlt (oder api_defaults.php konfigurieren)');
+    if (empty($data['absender']['name']))          api_err('absender.name fehlt — im Body mitsenden ODER Absenderdaten einmalig in den Einstellungen (⚙) deines Kontos hinterlegen (werden dann als Standard genutzt).');
+    if (empty($data['absender']['email']))         api_err('absender.email fehlt — im Body mitsenden ODER Absenderdaten in den Einstellungen (⚙) deines Kontos hinterlegen.');
+    if (empty($data['bankverbindung']['iban']))    api_err('bankverbindung.iban fehlt — im Body mitsenden ODER Bankverbindung in den Einstellungen (⚙) deines Kontos hinterlegen.');
 }
